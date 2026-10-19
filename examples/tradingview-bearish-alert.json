@@ -1,0 +1,11 @@
+{
+  "indicator": "Half Trend Regression [AlgoAlpha]",
+  "event": "REVERSAL",
+  "direction": "BEARISH",
+  "exchange": "{{exchange}}",
+  "ticker": "{{ticker}}",
+  "interval": "{{interval}}",
+  "index_close": "{{close}}",
+  "bar_time": "{{time}}",
+  "fired_at": "{{timenow}}"
+}

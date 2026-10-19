@@ -1,0 +1,25 @@
+# Node
+node_modules/
+
+# Secrets and local state
+.env
+
+# Generated runtime data. data/reference/ is tracked: it is configuration.
+data/*
+!data/reference/
+*.db
+*.db-wal
+*.db-shm
+
+# Local browser sessions and captures
+browser_profiles/
+screenshots/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+.DS_Store

@@ -1,0 +1,17 @@
+{
+  "name": "nifty-scalper-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only Playwright viewer plus TradingView AlgoAlpha signal intake; never places orders",
+  "engines": {"node": ">=20"},
+  "scripts": {
+    "watch": "node src/browser.mjs",
+    "listen": "node src/webhook-server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "playwright": "^1.56.0"
+  }
+}

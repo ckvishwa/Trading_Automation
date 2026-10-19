@@ -1,0 +1,62 @@
+// =====================================================================
+//  TEMPLATE ONLY -- NOT RUNNABLE AS SHIPPED. DO NOT "FIX" BY GUESSING.
+// =====================================================================
+//
+//  Purpose: emit the engine's alert JSON from the GENUINE Half Trend
+//  Regression [AlgoAlpha] reversal conditions.
+//
+//  This file contains NO trend calculation, on purpose. The indicator's
+//  logic has not been read or verified from this environment, and inventing
+//  an approximation of it would silently replace the strategy's only signal
+//  generator with something else.
+//
+//  To complete it:
+//    1. Open https://www.tradingview.com/script/A9Dp4WrK-Half-Trend-Regression-AlgoAlpha/
+//    2. Use the script page's "Source code" view (it is published open-source).
+//    3. Paste the real source below the header, keeping its author attribution
+//       and licence terms intact.
+//    4. Replace the two placeholders with the real variables that become true
+//       on a bullish / bearish trend change.
+//    5. Set //@version to whatever the real source declares.
+//
+//  Simpler alternative that needs no Pine edit at all: create the alerts
+//  directly on the published indicator's own alert conditions and paste the
+//  JSON from ../examples/ as the alert message. See ./README.md.
+//
+//@version=0   // <-- REPLACE with the version the real HTR source declares
+
+indicator("HTR Alert Adapter (INCOMPLETE TEMPLATE)", overlay = true)
+
+// ---------------------------------------------------------------------
+// STEP 4: wire these to the real indicator's direction-change conditions.
+// They are intentionally left as compile-time errors so this file cannot be
+// run, or committed as "working", while the signal source is unverified.
+// ---------------------------------------------------------------------
+htrTurnedBullish = REPLACE_WITH_REAL_HTR_BULLISH_REVERSAL_CONDITION
+htrTurnedBearish = REPLACE_WITH_REAL_HTR_BEARISH_REVERSAL_CONDITION
+
+// ---------------------------------------------------------------------
+// Alert payloads. Keep these byte-identical to ../examples/*.json so the
+// engine's contract tests describe what TradingView actually sends.
+//
+// {{time}} is the triggering bar's OPEN time; the engine derives the close.
+// Create the alerts with frequency "Once Per Bar Close".
+// ---------------------------------------------------------------------
+buyMessage = '{"indicator":"Half Trend Regression [AlgoAlpha]",' +
+     '"indicator_version":"A9Dp4WrK","event":"REVERSAL","signal":"BUY",' +
+     '"exchange":"{{exchange}}","ticker":"{{ticker}}","interval":"{{interval}}",' +
+     '"signal_price":"{{close}}","bar_open_time":"{{time}}",' +
+     '"fired_at":"{{timenow}}","mode":"PAPER"}'
+
+sellMessage = '{"indicator":"Half Trend Regression [AlgoAlpha]",' +
+     '"indicator_version":"A9Dp4WrK","event":"REVERSAL","signal":"SELL",' +
+     '"exchange":"{{exchange}}","ticker":"{{ticker}}","interval":"{{interval}}",' +
+     '"signal_price":"{{close}}","bar_open_time":"{{time}}",' +
+     '"fired_at":"{{timenow}}","mode":"PAPER"}'
+
+alertcondition(htrTurnedBullish, title = "HTR bullish reversal (engine)", message = buyMessage)
+alertcondition(htrTurnedBearish, title = "HTR bearish reversal (engine)", message = sellMessage)
+
+// A BUY is a candidate bullish direction that MAY lead to buying a CE option
+// after the behavioural engine accepts it and risk checks pass. It is not a
+// broker instruction.

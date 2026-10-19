@@ -1,0 +1,26 @@
+{
+  "_README": "Exchange schedule data. NOT verified by the engine author. Holiday lists and session timings must be filled in from official NSE circulars and `verified_through` set to the last date they cover. While `verified_through` is null or in the past, the session module reports UNVERIFIED_CALENDAR and every downstream gate fails closed.",
+  "timezone": "Asia/Kolkata",
+  "verified_through": null,
+  "source_urls": [
+    "https://www.nseindia.com/resources/exchange-communication-holidays",
+    "https://www.nseindia.com/products-services/equity-derivatives-trading-schedule-holidays"
+  ],
+  "segments": {
+    "CASH": {
+      "regular_open": "09:15",
+      "regular_close": "15:30",
+      "pre_open_start": "09:00",
+      "pre_open_end": "09:08"
+    },
+    "FO": {
+      "regular_open": "09:15",
+      "regular_close": "15:30"
+    }
+  },
+  "trading_holidays": {
+    "CASH": [],
+    "FO": []
+  },
+  "special_sessions": []
+}

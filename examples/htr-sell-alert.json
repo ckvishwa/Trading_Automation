@@ -1,0 +1,13 @@
+{
+  "indicator": "Half Trend Regression [AlgoAlpha]",
+  "indicator_version": "A9Dp4WrK",
+  "event": "REVERSAL",
+  "signal": "SELL",
+  "exchange": "{{exchange}}",
+  "ticker": "{{ticker}}",
+  "interval": "{{interval}}",
+  "signal_price": "{{close}}",
+  "bar_open_time": "{{time}}",
+  "fired_at": "{{timenow}}",
+  "mode": "PAPER"
+}
