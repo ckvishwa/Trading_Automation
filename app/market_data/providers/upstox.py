@@ -109,7 +109,25 @@ EARLIEST_DAILY = date(2000, 1, 1)
 # The documentation types `expiry` as "date" and shows 13-digit values. Treating
 # them as epoch milliseconds is an inference, flagged so it is not mistaken for
 # a documented fact.
-EXPIRY_UNIT_VERIFIED = False
+# Verified against the real NSE instrument file on 2026-10-19 (sha256
+# d6670c14..., 79,580 records): every NIFTY option expiry decoded to a plausible
+# Monday or Tuesday in 2026-2028, so the 13-digit values are epoch milliseconds.
+# Still not a *documented* fact -- the page types the field only as "date".
+EXPIRY_UNIT_VERIFIED = True
+EXPIRY_UNIT_EVIDENCE = (
+    "data/reference/upstox_instruments_verification.json: 18 NIFTY expiries, "
+    "none implausible, weekdays Monday/Tuesday"
+)
+
+# `tick_size` is published in PAISE, not rupees. Evidence from the same file:
+# NIFTY options carry tick_size 5.0 and trade in Rs 0.05 ticks, and NSE_EQ
+# carries 1.0 / 5.0 / 10.0 / 50.0 / 100.0 against the Rs 0.01 / 0.05 / 0.10 /
+# 0.50 / 1.00 tick regime. The documentation does not state a unit, so this is
+# inference from data rather than a documented fact -- but shipping the raw
+# number as rupees would round every option price a hundredfold wrong.
+TICK_SIZE_IS_PAISE = True
+PAISE_PER_RUPEE = 100.0
+
 FEED_TIMEZONE_VERIFIED = False
 VERIFIED_AGAINST_LIVE_ACCOUNT = False
 
@@ -197,14 +215,31 @@ def epoch_millis_to_utc(value: Any) -> datetime:
 # Instrument master
 # --------------------------------------------------------------------------
 
-# Engine symbol -> (segment, trading_symbol). The documentation's index example
-# is a BSE index, so NIFTY's own record was never shown; this mapping is an
-# expectation to be checked against a downloaded file, not a documented fact.
-# `resolve` raises rather than guessing when a mapping does not match.
+# Engine symbol -> (segment, trading_symbol), **verified against the real NSE
+# instrument file on 2026-10-19**. The trap this walks into: an index record's
+# `trading_symbol` is the derivatives ticker, while its human name lives in
+# `name`. NIFTY 50 is
+#   {"instrument_key": "NSE_INDEX|Nifty 50", "trading_symbol": "NIFTY",
+#    "name": "Nifty 50", "exchange_token": "26000"}
+# so an alias written against the documented *key* spelling ("Nifty 50") does
+# not resolve. BSE:SENSEX is unverified: it is not in the NSE file, and the BSE
+# file has not been downloaded.
 DEFAULT_SYMBOL_ALIASES: dict[str, tuple[str, str]] = {
-    "NSE:NIFTY": ("NSE_INDEX", "Nifty 50"),
-    "NSE:BANKNIFTY": ("NSE_INDEX", "Nifty Bank"),
-    "BSE:SENSEX": ("BSE_INDEX", "SENSEX"),
+    "NSE:NIFTY": ("NSE_INDEX", "NIFTY"),
+    "NSE:BANKNIFTY": ("NSE_INDEX", "BANKNIFTY"),
+    "NSE:FINNIFTY": ("NSE_INDEX", "FINNIFTY"),
+    "NSE:MIDCPNIFTY": ("NSE_INDEX", "MIDCPNIFTY"),
+    "BSE:SENSEX": ("BSE_INDEX", "SENSEX"),  # UNVERIFIED: BSE file not downloaded
+}
+
+# Verified instrument keys, for cross-checking a resolution rather than for
+# constructing one. The engine still looks keys up; these only let a test catch
+# a silently different resolution.
+VERIFIED_INDEX_KEYS = {
+    "NSE:NIFTY": "NSE_INDEX|Nifty 50",
+    "NSE:BANKNIFTY": "NSE_INDEX|Nifty Bank",
+    "NSE:FINNIFTY": "NSE_INDEX|Nifty Fin Service",
+    "NSE:MIDCPNIFTY": "NSE_INDEX|NIFTY MID SELECT",
 }
 
 
@@ -296,8 +331,40 @@ class UpstoxInstrumentMaster:
             expiry = expiry_to_date(record["expiry"])
 
         lot_size = record.get("lot_size")
-        tick_size = record.get("tick_size")
+        raw_tick_size = record.get("tick_size")
         strike = record.get("strike_price")
+
+        tick_size: float | None = None
+        if raw_tick_size not in (None, ""):
+            tick_size = float(raw_tick_size)
+            if tick_size <= 0:
+                raise MarketDataError(
+                    f"non-positive tick_size {raw_tick_size!r} on "
+                    f"{provider_key!r}; a zero tick cannot be rounded to"
+                )
+            if TICK_SIZE_IS_PAISE:
+                tick_size /= PAISE_PER_RUPEE
+
+        # An option must not be tradable without the facts a trade needs. These
+        # are rejected here rather than defaulted, because a defaulted lot size
+        # or strike is a wrong order waiting to be sized.
+        if option_type is not None:
+            missing = [
+                field_name
+                for field_name, value in (
+                    ("lot_size", lot_size),
+                    ("tick_size", raw_tick_size),
+                    ("strike_price", strike),
+                    ("expiry", expiry),
+                )
+                if value in (None, "")
+            ]
+            if missing:
+                raise MarketDataError(
+                    f"ambiguous option contract {provider_key!r} "
+                    f"({trading_symbol!r}) is missing {', '.join(missing)}; "
+                    "refusing to treat it as tradable"
+                )
 
         return Instrument(
             symbol=f"{PROVIDER_NAME}:{provider_key}",
@@ -305,11 +372,13 @@ class UpstoxInstrumentMaster:
             exchange=record.get("exchange"),
             segment=segment,
             lot_size=int(lot_size) if lot_size not in (None, "") else None,
-            tick_size=float(tick_size) if tick_size not in (None, "") else None,
+            tick_size=tick_size,
             expiry=expiry,
             strike=float(strike) if strike not in (None, "") else None,
             option_type=option_type,
-            underlying_symbol=record.get("underlying_symbol"),
+            # The real file carries both `underlying_*` and `asset_*` on option
+            # records; the documentation mentions only the former.
+            underlying_symbol=record.get("underlying_symbol") or record.get("asset_symbol"),
             provenance=provenance,
             extra={
                 "trading_symbol": trading_symbol,
@@ -318,9 +387,13 @@ class UpstoxInstrumentMaster:
                 "exchange_token": record.get("exchange_token"),
                 "freeze_quantity": record.get("freeze_quantity"),
                 "minimum_lot": record.get("minimum_lot"),
-                "underlying_key": record.get("underlying_key"),
-                "underlying_type": record.get("underlying_type"),
+                "underlying_key": record.get("underlying_key") or record.get("asset_key"),
+                "underlying_type": record.get("underlying_type") or record.get("asset_type"),
                 "weekly": record.get("weekly"),
+                "qty_multiplier": record.get("qty_multiplier"),
+                # Kept so a rounding dispute can be traced to the source value.
+                "tick_size_raw": raw_tick_size,
+                "tick_size_unit": "paise" if TICK_SIZE_IS_PAISE else "rupees",
             },
         )
 
@@ -636,25 +709,87 @@ class FeedDecoder(Protocol):
 
 
 class ProtobufFeedDecoder:
-    """Protobuf decoding, which needs generated stubs this repo does not carry.
+    """Decodes Upstox feed frames using the official generated schema.
 
-    Generating them requires downloading the `.proto` and running `protoc`, or
-    installing Upstox's own SDK. Rather than vendor a guess at the schema, this
-    raises with the exact URL and the import it looked for. Everything
-    downstream of the decode is implemented and tested against the documented
-    decoded shape, so swapping a working decoder in is a one-line change.
+    The schema is Upstox's own `MarketDataFeed.proto`, vendored under
+    `upstox_proto/` with its SHA256 and retrieval time in `SCHEMA.lock.json`.
+    No field definition in this project was written by hand.
+
+    The decoded value is the documented JSON shape, because protobuf's own JSON
+    mapping already produces it: camelCase names, 64-bit integers as strings,
+    and unset fields omitted. That is exactly what the published examples show,
+    so `UpstoxFeedNormalizer` consumes a decoded live frame and a recorded JSON
+    fixture through one code path.
+
+    Two proto3 details are handled explicitly rather than left to the default
+    mapping:
+
+    * **A zero-valued enum is indistinguishable from an unset one**, so
+      `type` is absent from the mapping whenever it is `initial_feed` (0). The
+      decoder always sets it, or a snapshot would arrive looking untyped.
+    * **`requestMode` has the same problem** (`ltpc` is 0), so it is filled per
+      feed from the parsed message instead of the mapping.
+
+    Unknown fields are preserved by the runtime and ignored here, which is what
+    makes a future additive schema change non-breaking.
     """
 
-    def __init__(self, module_name: str = "MarketDataFeedV3_pb2") -> None:
-        self._module_name = module_name
+    def __init__(self) -> None:
+        self._parser = None
+
+    def _load(self):
+        if self._parser is None:
+            try:
+                from google.protobuf.json_format import MessageToDict
+
+                from app.market_data.providers import upstox_proto
+            except ImportError as exc:  # pragma: no cover - dependency missing
+                raise MarketDataError(
+                    "the protobuf runtime or the generated Upstox schema is "
+                    "unavailable. Install the pinned protobuf and regenerate with "
+                    "tools/generate_upstox_proto.py. Schema source: "
+                    f"{FEED_PROTO_URL}"
+                ) from exc
+            self._parser = (upstox_proto, MessageToDict)
+        return self._parser
+
+    @property
+    def schema_lock(self) -> dict:
+        """Provenance of the schema this decoder was generated from."""
+        import json
+        from pathlib import Path as _Path
+
+        lock = (
+            _Path(__file__).resolve().parent / "upstox_proto" / "SCHEMA.lock.json"
+        )
+        return json.loads(lock.read_text(encoding="utf-8"))
 
     def decode(self, frame: bytes) -> dict:
-        raise CredentialsMissing(
-            "Upstox feed frames are Protobuf-encoded and no generated schema is "
-            f"available (looked for {self._module_name!r}). Fetch "
-            f"{FEED_PROTO_URL} and compile it with protoc, or install Upstox's "
-            "SDK, then pass a decoder that returns the documented decoded dict."
-        )
+        upstox_proto, message_to_dict = self._load()
+        from google.protobuf.message import DecodeError
+
+        response = upstox_proto.FeedResponse()
+        try:
+            response.ParseFromString(frame)
+        except (DecodeError, Exception) as exc:  # noqa: BLE001
+            if not isinstance(exc, (DecodeError, ValueError, TypeError)):
+                raise
+            raise MarketDataError(
+                f"Upstox feed frame is not valid Protobuf for the vendored V3 "
+                f"schema ({len(frame)} bytes): {exc}"
+            ) from exc
+
+        payload = message_to_dict(response)
+        # Enum 0 is omitted by the JSON mapping; an initial snapshot must still
+        # say that it is one.
+        payload["type"] = upstox_proto.Type.Name(response.type)
+        if response.feeds:
+            feeds = payload.setdefault("feeds", {})
+            for key, feed in response.feeds.items():
+                feeds.setdefault(key, {})["requestMode"] = upstox_proto.RequestMode.Name(
+                    feed.requestMode
+                )
+        return payload
 
 
 class JsonFeedDecoder:
@@ -687,6 +822,12 @@ class FeedUpdate:
     feed_mode: str
     message_time: datetime | None
     ohlc: tuple[dict, ...] = ()
+    # The frame's own RequestMode, when the decoder supplied it. Note the
+    # schema's enum spells the five-level book `full_d5` while the subscription
+    # API calls that mode `full`; both are reported rather than reconciled, so a
+    # mismatch is visible instead of hidden.
+    request_mode: str | None = None
+    message_type: str | None = None
 
 
 class UpstoxFeedNormalizer:
@@ -729,12 +870,16 @@ class UpstoxFeedNormalizer:
             epoch_millis_to_utc(message["currentTs"]) if message.get("currentTs") else None
         )
         return tuple(
-            self.normalize_feed(key, payload, current_ts)
+            self.normalize_feed(key, payload, current_ts, message_type)
             for key, payload in feeds.items()
         )
 
     def normalize_feed(
-        self, instrument_key: str, payload: dict, message_time: datetime | None
+        self,
+        instrument_key: str,
+        payload: dict,
+        message_time: datetime | None,
+        message_type: str | None = None,
     ) -> FeedUpdate:
         provenance = Provenance(
             provider=PROVIDER_NAME,
@@ -756,10 +901,16 @@ class UpstoxFeedNormalizer:
             feed_mode=mode,
             message_time=message_time,
             ohlc=tuple(ohlc),
+            request_mode=payload.get("requestMode"),
+            message_type=message_type,
         )
 
     @staticmethod
     def _extract(payload: dict) -> tuple[dict | None, list[dict], list[dict], str]:
+        # An index full feed carries no depth at all (IndexFullFeed holds only
+        # ltpc and marketOHLC in the official schema), so an index subscribed in
+        # `full` mode yields a tick and no quote. That is the schema's shape, not
+        # a missing book.
         if "fullFeed" in payload:
             full = payload["fullFeed"]
             body = full.get("marketFF") or full.get("indexFF") or {}
@@ -781,7 +932,9 @@ class UpstoxFeedNormalizer:
         if "ltpc" in payload:
             return payload["ltpc"], [], [], "ltpc"
         raise MarketDataError(
-            f"unrecognised feed payload shape: keys={sorted(payload)[:8]}"
+            "feed payload carries no ltpc, fullFeed or firstLevelWithGreeks: "
+            f"keys={sorted(payload)[:8]}. An empty or truncated feed is reported "
+            "rather than silently treated as 'no change'."
         )
 
     def _to_tick(

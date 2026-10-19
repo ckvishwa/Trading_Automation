@@ -1,12 +1,13 @@
 # Test plan and evidence
 
-Updated 2026-10-19, after the provider documentation audit, the transport
-telemetry work and the Upstox/FYERS adapters.
+Updated 2026-10-19, after vendoring Upstox's official Protobuf schema,
+verifying instrument metadata against the real file, and loading the
+official NSE F&O holiday circular.
 
 ## How to run
 
 ```powershell
-# Python engine (396 tests, fully offline)
+# Python engine (502 tests, fully offline)
 .\.venv\Scripts\python.exe -m pytest
 
 # Pre-existing Node signal collector (6 tests, untouched)
@@ -23,10 +24,10 @@ authorization are present.
 
 | Suite | Command | Result |
 |---|---|---|
-| Python, all | `python -m pytest` | **396 passed**, 1 skipped, 0 failed, 1 warning |
-| Python unit | `python -m pytest tests/unit` | **328 passed** |
+| Python, all | `python -m pytest` | **502 passed**, 1 skipped, 0 failed, 1 warning |
+| Python unit | `python -m pytest tests/unit` | **412 passed** |
 | Python contract | `python -m pytest tests/contract` | **31 passed** |
-| Python replay | `python -m pytest tests/replay` | **37 passed, 1 skipped** |
+| Python replay | `python -m pytest tests/replay` | **59 passed, 1 skipped** |
 | Node (pre-existing) | `npm test` | **6 passed**, 0 failed |
 
 The one skip is deliberate and visible on purpose:
@@ -46,6 +47,75 @@ empty, whitespace, `banana`, `5x`, `m5`; intraday bar durations; **refusal** to
 derive a bar duration for D/W/M, because a daily bar's length depends on the
 session calendar; bar-open + one bar = bar-close.
 
+### `tests/unit/test_upstox_protobuf.py`
+Decoding of **genuine Protobuf wire bytes**, serialized by the classes generated
+from Upstox's official schema. Schema provenance: the vendored `.proto` hashes to
+its `SCHEMA.lock.json` entry, the lock records the published URL and the pinned
+generator versions, and the messages and enums the adapter relies on are
+asserted by name -- including that the schema spells the five-level book
+`full_d5` while the subscription API calls it `full`.
+Market status: segment statuses decode, a status frame yields no price updates,
+and a closing status is not read as open.
+Initial snapshot: **`initial_feed` is enum 0, which proto3 omits**, so the
+decoder sets `type` explicitly and a snapshot is not mistaken for a malformed
+frame; it normalizes like a live update.
+LTPC: 64-bit fields decode as strings exactly as the documented examples show,
+millisecond precision survives the round trip, and an LTPC with **no** `ltp`
+raises rather than defaulting to 0.0 -- which would reach the paper broker as a
+fill.
+Full market feeds: option fields (`oi`, `iv`, greeks, `marketOHLC`), five and
+thirty depth levels in order, normalization to a two-sided quote from the best
+level, a crossed book as an error, a one-sided book producing no tradable
+spread, the `option_greeks` first depth, and **`IndexFullFeed` carrying no depth
+by schema** so an index in full mode yields a tick and no quote.
+Malformed and edge cases: four kinds of malformed binary, an empty frame
+decoding to an untyped snapshot and then being **reported rather than treated as
+"no change"**, a feed entry holding no oneof member, a truncated submessage,
+**unknown field 99 ignored** (so an additive Upstox change is safe to receive),
+an unknown enum value not crashing the decode, and a quote timestamp mismatch.
+Disconnection recovery: a malformed frame arriving on the way down does not
+poison the decoder, and a reconnect followed by a fresh snapshot decodes
+normally while the watchdog tracks the state.
+
+### `tests/replay/test_market_data_replay.py`
+The whole route on genuine wire bytes: frames -> decoder -> tick -> candle
+builder -> SQLite -> feed health.
+Framing: a test **demonstrates** that two concatenated FeedResponse messages
+merge, with the first price lost, which is why frames carry a 4-byte
+big-endian length prefix; a truncated recording and a truncated prefix are both
+refused rather than partially replayed.
+The route: 15 frames, 14 decoded, one malformed counted and skipped without
+losing either side of it, one status frame, 13 ticks, one option quote, three
+candles built and stored, feed HEALTHY. Strict mode raises on the malformed
+frame instead of counting it.
+Storage: candles land with provider, `is_mock`, endpoint and tick count, and the
+candle close time equals the webhook's derived `bar_close_time` for the same bar.
+Determinism and no fabrication: replaying the same recording twice is
+byte-identical; replaying into a populated store stores nothing new; **a stored
+bar is never rewritten** even by a different reading of the same interval; empty
+buckets produce no candles; the recording's duplicate tick is counted once; and
+a candle with no provenance cannot be stored at all.
+Feed health through the replay: the watchdog follows the recording's clock (so a
+replay months later still reports the session healthy), a gap beyond the silence
+limit is reported unusable, a recording with no timestamps leaves the feed
+NEVER_CONNECTED, and a frame with no feeds, a crossed book and a pre-session
+tick are each counted by reason without halting the replay.
+
+### `tests/unit/test_live_readiness.py`
+The live smoke test fails closed: no credentials gives `LIVE BLOCKED` with a
+**non-zero** exit, the message tells the owner not to paste the token into a
+chat, log or recorded terminal, blocked is never reported as verified, a missing
+`websockets` dependency is blocked, and an unverified symbol is blocked rather
+than having a key constructed for it. An authorize failure is reported as
+**FAILED, not BLOCKED** -- credentials existed and the attempt was made. All
+credentials are registered as log secrets, and an empty one is not registered
+(an empty secret would redact everything).
+Repo-wide: a parametrized scan of every `.py` file under `app/` and `tools/`
+asserts that **no order-placement code exists** (`place_order`, `modify_order`,
+`cancel_order`, `/order/place`, `/v2/order`, `/v3/order`, `order/multi`, `gtt`),
+with a guard test that the scan actually finds source files -- a search that
+silently covers nothing proves nothing.
+
 ### `tests/unit/test_provider_upstox.py`
 Instrument master: loads the gzipped fixture, resolves an index through a
 configured alias, and **refuses to guess** both for an unmapped symbol and for a
@@ -54,6 +124,15 @@ lookup; reads CE/PE from `instrument_type` because the JSON has no
 `option_type`; takes strike, lot size, tick size and expiry from the record;
 lists expiries and filters contracts; raises before loading; names the missing
 transport on `refresh()`; uses an injected transport when given one.
+Verified against the real file: the index resolves to `NSE_INDEX|Nifty 50` with
+`trading_symbol` `NIFTY` and `name` `Nifty 50` -- an alias written against the
+documented *key* spelling does not resolve, which is how this was caught;
+`tick_size` is **converted from paise to rupees** (5.0 -> 0.05) with the raw
+value kept; a non-positive tick is refused; an option missing lot size, tick,
+strike or expiry is **rejected as ambiguous** rather than loaded; a non-option
+record needs none of them; and the recorded verification evidence is asserted to
+match the code's aliases, so editing an alias without re-running the verifier
+fails.
 Malformed data: a wrongly typed or missing field is reported **with the field
 name**, a non-array file and a non-gzip file are rejected, and an unparseable
 expiry raises. Expiry handling accepts seconds and milliseconds and is taken
@@ -217,6 +296,19 @@ delivery-age boundary from both sides; clock-skew tolerance actually applied;
 non-object bodies (`None`, `[]`, string, int); idempotency key stable across
 re-deliveries and distinct across direction and bar.
 
+### `tests/unit/test_session.py` (official-calendar section)
+The F&O holiday horizon is official through 2026-12-31 while the cash horizon is
+null and **all** session windows stay unofficial; the circular's identity, date,
+URL and SHA256 are recorded and asserted, as are the three outstanding items
+(cash list, session timings, Muhurat timings); **an official holiday list does
+not make the timings official**, so an ordinary Monday inside the horizon is
+`calendar_verified=True` and still `UNVERIFIED_CALENDAR`; all fifteen weekday
+holidays in the circular close the F&O segment, the three weekend-falling ones
+are present, and 2026-10-20 closes F&O officially and cash unofficially; Muhurat
+on **Sunday** 2026-11-08 reports `UNSUPPORTED_SESSION` rather than `WEEKEND`,
+which is why special sessions are checked before the weekend rule; and the
+earlier third-party 2026-10-21 Muhurat guess is asserted gone.
+
 ### `tests/unit/test_session.py`
 OPEN mid-session; CLOSED before and after hours; close time exclusive; cash
 pre-open distinct from regular session; weekend reported even without a verified
@@ -265,6 +357,82 @@ GET /health -> signals_recorded: 1, pending_decisions: 1, decision_engine: NOT_I
 Structured JSON logs carried a `correlation_id` on every line, and the worker
 logged `signal awaiting behavioral decision ... decision_engine: NOT_IMPLEMENTED`.
 The smoke-test database was deleted afterwards so the journal starts empty.
+
+### Fourth run, after the Protobuf decoder and the verified reference data
+
+Schema, fetched from the URL Upstox publishes on its V3 feed page:
+
+```
+https://assets.upstox.com/feed/market-data-feed/v3/MarketDataFeed.proto
+sha256 3e1c939dce2c83a3fef91405c5ca268dfa089aae973319f56685f12a5afcf612
+2,259 bytes, retrieved 2026-10-19T23:27:21Z
+generated with protobuf==5.29.3, grpcio-tools==1.68.1
+```
+
+The hash was produced independently by `curl | sha256sum` and by the generator,
+and matched. `python tools/generate_upstox_proto.py` is reproducible and refuses
+a changed schema without `--allow-schema-change`.
+
+Instruments, from the real published file:
+
+```
+https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz
+sha256 d6670c143b6e6e4b0260e9f6fec2decf0e2c979b3c4b9d2df3cc729cf265a38d
+1,982,987 bytes, 79,580 records, 0 duplicate instrument_keys
+index RESOLVED -> NSE_INDEX|Nifty 50  (trading_symbol "NIFTY", name "Nifty 50",
+                                       exchange_token 26000)
+NIFTY options: 18 expiries, nearest 2026-10-19 with 208 contracts (104 CE/104 PE)
+  strikes 20050-25200 step 50, lot_size 65 on all 1,882 contracts,
+  tick_size 0.05 after the paise conversion (raw 5.0),
+  0 contracts missing required metadata,
+  0 implausible expiries -> expiry really is epoch milliseconds
+```
+
+Recorded in `data/reference/upstox_instruments_verification.json`.
+
+Calendar, from the NSE archive endpoint (which answers automated requests, unlike
+nseindia.com's HTML pages):
+
+```
+https://nsearchives.nseindia.com/content/circulars/FAOP71777.pdf
+sha256 5a2079cd78b2e6b536ef0d28300e63b645721bed22cc82a91facf5945f3296ea
+176,660 bytes, 2 pages, retrieved 2026-10-19T23:34:58Z
+NSE/FAOP/71777, Circular Ref 212/2025, dated 2025-12-12, FUTURES & OPTIONS
+15 weekday holidays for 2026, entry 12 being "October 20, 2026 Tuesday Dussehra"
+3 weekend-falling holidays
+"Muhurat Trading will be conducted on Sunday, November 08, 2026. Timings of
+ Muhurat Trading shall be notified subsequently."
+```
+
+Classification from the shipped calendar, run directly:
+
+```
+FO holidays official through 2026-12-31   CASH: None
+2026-10-20 FO    HOLIDAY  open=False verified=True   Dussehra [source=official]
+2026-10-20 CASH  HOLIDAY  open=False verified=False  Dussehra [source=unofficial]
+2026-10-19 FO    UNVERIFIED_CALENDAR  open=False verified=True
+                 (the FO session window is marked source=unofficial)
+2026-11-08 FO    UNSUPPORTED_SESSION  open=False  (Muhurat, timings not notified)
+```
+
+End-to-end market replay, `python -m app.research market-replay --frames
+examples/fixtures/upstox-feed-session.binpb --dry-run`:
+
+```
+frames 15, decoded 14, malformed 1, status_messages 1, ticks 13, quotes 1,
+candles_built 3, candles_stored 3, candles_duplicate 0,
+final_feed_state HEALTHY, candles_in_store 3,
+builder_stats: accepted 11, duplicates 1, late 1, buckets_skipped 2
+```
+
+Live connection:
+
+```
+python tools/upstox_live_smoke.py
+  -> {"status": "LIVE BLOCKED", "reason": "UPSTOX_ACCESS_TOKEN is not set ...",
+      "verified_against_live_account": false, "orders_placed": 0}
+  exit code 2
+```
 
 ### Third run, after telemetry, the calendar rewrite and the adapters
 
@@ -331,24 +499,30 @@ durable queue. The journal was cleared again afterwards.
 `examples/fixtures/` holds replayable market-data fixtures in each provider's
 documented payload shape -- Upstox feed frames (`ltpc` and `full`), an Upstox
 instrument file, a FYERS symbol master and a FYERS expired-option history
-response. They are synthetic, anchored to 09:15 IST on 2026-10-19 so bars align
+response -- plus `upstox-feed-session.binpb`, which holds **genuine
+length-prefixed Protobuf wire bytes** and is what the end-to-end replay test
+runs. The Upstox instrument fixture mirrors the real downloaded record shape
+(tick_size in paise, lot_size 65, the undocumented asset_* fields). Values are
+synthetic, anchored to 09:15 IST on 2026-10-19 so bars align
 with the engine's session grid, and regenerated with
 `python tools/make_market_data_fixtures.py`. See `examples/fixtures/README.md`.
 
 ## Known gaps
 
-* **Nothing is authenticated.** No Upstox or FYERS credential exists, no socket
-  has been opened, and no response from either provider has ever been seen. Every
-  documented fact encoded in the adapters is doc-level only, and each module
-  carries `VERIFIED_AGAINST_LIVE_ACCOUNT = False`.
-* **The Protobuf wire decode is not implemented.** Upstox's live feed is
-  Protobuf-encoded; generating the stubs needs the published `.proto` plus
-  `protoc`, or Upstox's SDK. Everything downstream of the decode is implemented
-  and tested against the documented decoded shape via `JsonFeedDecoder`.
-* **The exchange calendar has no official data.** nseindia.com did not answer
-  automated retrieval (two 60s timeouts). The shipped closures are third-party
-  sourced and marked `unofficial`, which is enough to close a day and never to
-  open one.
+* **No authenticated call has been made.** No Upstox or FYERS credential
+  exists and no socket has been opened. Unauthenticated CDN and archive
+  downloads *have* been made and verified -- the Protobuf schema, the NSE
+  instrument file and the NSE F&O circular -- but every module still carries
+  `VERIFIED_AGAINST_LIVE_ACCOUNT = False`.
+* **The cash-segment holiday list is still unofficial.** The retrieved circular
+  covers F&O only; the cash list is a separate circular that has not been read,
+  and is deliberately not inferred from the F&O one.
+* **No session timings are official.** No circular read here states them, so
+  every ordinary trading day reports `UNVERIFIED_CALENDAR`.
+* **Muhurat 2026 timings are unknown**, by the circular's own wording, so that
+  session reports `UNSUPPORTED_SESSION`.
+* **The feed's timestamp timezone is unverified.** Millisecond epochs are read
+  as UTC instants; the documentation states no timezone.
 * **`FRESH`/`DELAYED` over real HTTP is only covered with a frozen clock.** A
   genuine in-session bar cannot be POSTed outside market hours, because the
   freshness budget and the session bar grid cannot both be satisfied.

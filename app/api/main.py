@@ -36,9 +36,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
             "WEBHOOK_TOKEN is not set. Generate 32+ random characters and put it in .env"
         )
 
-    # The webhook token is registered as a secret so that no log line can
-    # carry it, whichever library writes the line.
-    configure_logging(secrets=(settings.webhook_token,))
+    # Every credential is registered as a secret so that no log line can carry
+    # one, whichever library writes the line.
+    configure_logging(secrets=settings.secrets)
     store = EventStore(settings.database_path)
     calendar = SessionCalendar.load(settings.holiday_file)
     worker = SignalWorker(store)

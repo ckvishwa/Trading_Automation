@@ -2,8 +2,9 @@
 
 **Scope of this document:** it describes the code that exists, not the design
 intent. Components marked NOT IMPLEMENTED have no code behind them. Last
-updated 2026-10-19, after the provider documentation audit, the transport
-telemetry work and the Upstox/FYERS adapters.
+updated 2026-10-19, after vendoring Upstox's official Protobuf schema,
+verifying instrument metadata against the real file, and loading the
+official NSE F&O holiday circular.
 
 ## Responsibility split
 
@@ -11,7 +12,7 @@ telemetry work and the Upstox/FYERS adapters.
 |---|---|
 | TradingView / Pine | Signal **generation** only (Half Trend Regression reversals) |
 | Python engine | Contract validation, behavioural decisions, risk, paper simulation, evaluation |
-| Upstox | Live market **data** only -- adapter implemented, **no credentials, never run against a live account** |
+| Upstox | Live market **data** only -- adapter and official Protobuf decoder implemented, **no credentials, never run against a live account** |
 | FYERS | Historical research **data** only -- adapter implemented, same caveat |
 
 The decision engine is deliberately separate from broker connectivity, and every
@@ -62,8 +63,12 @@ Provider-neutral market-data layer         [PARTIAL -- M3]
   app/market_data/mock_provider.py  offline fixtures         [IMPLEMENTED]
   app/market_data/providers/upstox.py   instrument master, feed
                                         subscription + normalization,
+                                        Protobuf decoding,
                                         rate limiter        [IMPLEMENTED,
                                                              UNAUTHENTICATED]
+  app/market_data/providers/upstox_proto/  official MarketDataFeed.proto
+                                        + generated module
+                                        + SCHEMA.lock.json  [VENDORED]
   app/market_data/providers/fyers.py    symbol master, history and
                                         expired-F&O parsing [IMPLEMENTED,
                                                              UNAUTHENTICATED]
@@ -150,7 +155,8 @@ SQLite, WAL, `synchronous=FULL`, one write connection behind a lock.
 | `raw_events` | Verbatim authenticated request bodies, correlation id, content type |
 | `signal_events` | Normalized events, `session_state`, `status`, full event JSON |
 | `ingest_rejections` | Every ingress rejection with its reason code and detail |
-| `schema_migrations` | Schema version (currently 2) |
+| `market_candles` | Completed candles, keyed (symbol, timeframe, open_time), with provider, `is_mock`, endpoint and fetch time |
+| `schema_migrations` | Schema version (currently 3) |
 
 Schema changes are additive `ALTER TABLE` statements applied when a column is
 missing, so an existing journal is upgraded in place rather than discarded.
@@ -197,6 +203,50 @@ FYERS API facts are in `docs/ADR/0004-provider-neutral-market-data.md`.
 * **Errors, not defaults.** `DataUnavailable`, `CredentialsMissing`,
   `RateLimited`, `FeedDisconnected`. Both provider adapters currently raise
   `CredentialsMissing`.
+
+## Feed decoding
+
+Upstox's live feed is Protobuf. The schema is Upstox's own
+`MarketDataFeed.proto`, vendored under
+`app/market_data/providers/upstox_proto/` with its SHA256, retrieval time and
+pinned generator versions in `SCHEMA.lock.json`, and regenerated only by
+`tools/generate_upstox_proto.py`. **No field definition in this project was
+written by hand**; the generator refuses to proceed if the published schema's
+hash changes without that being acknowledged.
+
+`ProtobufFeedDecoder` returns the documented JSON shape, because protobuf's own
+JSON mapping already produces it -- camelCase, 64-bit integers as strings, unset
+fields omitted. A live frame and a recorded JSON fixture therefore take one code
+path through `UpstoxFeedNormalizer`. Two proto3 details are handled explicitly:
+`type` is always set (`initial_feed` is enum 0, which the mapping omits, so a
+snapshot would otherwise arrive untyped) and `requestMode` is filled per feed.
+
+Facts the schema settled, which the documentation did not: `IndexFullFeed`
+carries **no depth**, so an index in full mode yields a tick and no quote; and
+the schema's enum spells the five-level book `full_d5` while the subscription
+API calls that mode `full`.
+
+Recorded frames are stored **length-prefixed** (4-byte big-endian), because
+Protobuf messages are not self-delimiting: concatenating two yields a third
+valid message with later fields silently overwriting earlier ones.
+
+## Market-data replay
+
+`app/research/market_replay.py` runs the whole live route offline:
+
+```
+Protobuf wire bytes -> ProtobufFeedDecoder -> UpstoxFeedNormalizer
+                    -> CandleBuilder -> EventStore.market_candles
+                    -> FeedWatchdog state
+```
+
+The clock comes from the frames, not from wall time, so a replay is
+reproducible. Frames are processed in recording order -- a late or duplicate
+frame is a fact under test, not something to tidy away. Candles are keyed on
+(symbol, timeframe, open_time), so a second replay stores nothing new and an
+existing bar is never rewritten. A malformed frame is counted and skipped; a
+bucket with no ticks produces no candle. `python -m app.research market-replay`
+runs it.
 
 ## Research layer (M1 parity, M7 replay)
 

@@ -64,6 +64,15 @@ class Settings(BaseSettings):
         default=5, alias="BAR_CLOSE_TOLERANCE_SECONDS"
     )
 
+    # --- Market data credentials -----------------------------------------
+    # Read from the environment only, never from a file in the repository and
+    # never from a prompt. Both are registered with the log redactor at startup,
+    # so neither can reach a log line. Absent means LIVE BLOCKED, not degraded
+    # live operation: an engine that cannot authenticate must say so.
+    upstox_access_token: str = Field(default="", alias="UPSTOX_ACCESS_TOKEN")
+    upstox_api_key: str = Field(default="", alias="UPSTOX_API_KEY")
+    fyers_access_token: str = Field(default="", alias="FYERS_ACCESS_TOKEN")
+
     # --- Storage ----------------------------------------------------------
     database_path: Path = Field(
         default=PROJECT_ROOT / "data" / "engine.db", alias="DATABASE_PATH"
@@ -100,6 +109,24 @@ class Settings(BaseSettings):
                 "WEBHOOK_TOKEN must be at least 32 characters of unguessable randomness"
             )
         return value
+
+    @property
+    def secrets(self) -> tuple[str, ...]:
+        """Every value that must never appear in a log line."""
+        return tuple(
+            value
+            for value in (
+                self.webhook_token,
+                self.upstox_access_token,
+                self.upstox_api_key,
+                self.fyers_access_token,
+            )
+            if value
+        )
+
+    @property
+    def has_upstox_credentials(self) -> bool:
+        return bool(self.upstox_access_token)
 
     @property
     def symbol_allowlist(self) -> tuple[str, ...]:

@@ -12,11 +12,21 @@ from them carries mock or fixture provenance.
 | `upstox-instruments-sample.json.gz` | Gzipped JSON array, instrument-file record shape | Instrument master parsing, expiry and option-chain queries |
 | `fyers-symbol-master-sample.json` | JSON object keyed by `symTicker` | FYERS symbol master parsing, including an inactive `tradeStatus` row |
 | `fyers-expired-option-history.json` | `s`/`columns`/`candles` history response | Expired-F&O parsing with null OI and Greeks on one candle |
+| `upstox-feed-session.binpb` | **Real Protobuf wire bytes**, length-prefixed (4-byte big-endian) | End-to-end replay through the genuine decoder: a status frame, a snapshot, an LTPC price path with a duplicate and an out-of-order tick, a deliberately malformed frame, and one five-level option quote |
 
-The frames are the **decoded** structure, not Protobuf bytes. Upstox's live feed
-is Protobuf-encoded, and generating the stubs needs the published `.proto` plus
-`protoc`; `JsonFeedDecoder` reads these fixtures through exactly the
-normalization the live path uses, so only the wire decode is left to swap in.
+`upstox-feed-session.binpb` holds genuine Protobuf wire bytes, serialized with
+the classes generated from Upstox's official schema, and is what the end-to-end
+replay test runs. Protobuf messages are not self-delimiting -- concatenating two
+yields a third valid message with later fields overwriting earlier ones -- so
+each frame carries a 4-byte big-endian length prefix.
+
+The `.jsonl` files hold the **decoded** structure instead, read by
+`JsonFeedDecoder`. They stay useful because protobuf's own JSON mapping produces
+exactly that shape, so a hand-written case can be added without serializing it.
+
+The instrument fixture's record shape is copied from the real downloaded NSE
+file: `tick_size` in paise, `lot_size` 65, and the `asset_*` fields the
+documentation does not mention.
 
 Timestamps are anchored to 09:15 IST on Monday 2026-10-19 so bars line up with
 the engine's session-open grid. Regenerate with the script referenced in

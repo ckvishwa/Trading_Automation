@@ -9,7 +9,7 @@ This repository now holds **two** things. Read this first so you run the right o
 | Port | 8788 | 8787 |
 | Webhook path | `/v1/webhooks/tradingview/<WEBHOOK_TOKEN>` | `/alert/<ALERT_KEY>` |
 | Store | `data/engine.db` (SQLite WAL) | `data/accepted-signals.jsonl` |
-| Tests | `.\.venv\Scripts\python.exe -m pytest` (396) | `npm test` (6) |
+| Tests | `.\.venv\Scripts\python.exe -m pytest` (502) | `npm test` (6) |
 
 Point your TradingView alert at **one** of them. Running both against the same
 alert double-counts the signal in two separate journals.
@@ -52,18 +52,32 @@ of the Half Trend Regression indicator, is in [`pine/README.md`](pine/README.md)
 |---|---|
 | M0 repository audit | PASS -- [`docs/AUDIT_M0.md`](docs/AUDIT_M0.md) |
 | M1 HTR signal contract | PARTIAL -- genuine Pine v5 source held and analysed ([`pine/HTR_ANALYSIS.md`](pine/HTR_ANALYSIS.md)); conditions, defaults and display-only inputs verified; historical repaint ruled out offline. Awaiting recorded genuine alerts for parity, and one live alert end to end |
-| M2 FastAPI receiver | PASS -- 396 tests, live endpoint exercised, full transport telemetry |
-| M3 market data (Upstox live, FYERS research) | PARTIAL -- mock/fixture paths complete; Upstox and FYERS adapters implemented from official docs but **never authenticated** |
+| M2 FastAPI receiver | PASS -- 502 tests, live endpoint exercised, full transport telemetry |
+| M3 market data (Upstox live, FYERS research) | PARTIAL -- transport complete offline: official Protobuf schema vendored and decoding, instrument metadata verified against the real file, official NSE F&O 2026 holidays loaded, deterministic end-to-end replay. **Live BLOCKED**: no credentials |
 | M4 behaviour engine onward | NOT STARTED |
 
-The exchange calendar in `data/reference/nse_calendar.json` claims **no
-official verification**. nseindia.com does not answer automated requests, so the
-only obtainable data was third-party, and every entry is marked `unofficial` or
-`disputed`. The rule the code enforces: **unofficial data may close the market,
-never open it.** So 2026-10-20 (Dussehra) correctly reports `HOLIDAY`, the
-disputed Muhurat date reports `UNSUPPORTED_SESSION`, and every ordinary trading
-day reports `UNVERIFIED_CALENDAR` until you read the circulars, mark the session
-windows `official` and set `official_verified_through`.
+The exchange calendar in `data/reference/nse_calendar.json` now carries the
+**official 2026 F&O holiday list** from NSE circular NSE/FAOP/71777 (12 Dec
+2025), hash-recorded. What it still does not carry: the cash-segment holiday
+list (a separate circular) and any session timings (no circular read states
+them). The rules the code enforces:
+
+* **unofficial data may close the market, never open it;**
+* an official holiday list does **not** make the session timings official.
+
+So 2026-10-20 (Dussehra) reports `HOLIDAY` officially for F&O, Muhurat on Sunday
+2026-11-08 reports `UNSUPPORTED_SESSION` because the circular says its timings
+will be "notified subsequently", and an ordinary trading day still reports
+`UNVERIFIED_CALENDAR` until you mark the session windows `official`.
+
+Live market data is **BLOCKED** until credentials exist:
+
+```powershell
+.\.venv\Scripts\python.exe tools\upstox_live_smoke.py   # read-only; exits 2 as LIVE BLOCKED
+```
+
+Set `UPSTOX_ACCESS_TOKEN` in your own shell or `.env` -- never paste it into a
+chat, a log, or a recorded terminal.
 
 Docs: [PRD](docs/PRD.md) | [ARD](docs/ARD.md) | [Test plan](docs/TEST_PLAN.md) |
 [ADRs](docs/ADR/) | [Engineering instructions](CLAUDE.md)

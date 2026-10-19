@@ -67,6 +67,20 @@ no order or trade path.
   `CredentialsMissing`, `RateLimited`, `FeedDisconnected`. A malformed record is
   reported with the offending field, never defaulted -- a defaulted lot size is
   a wrong trade waiting to happen.
+* **Never hand-write a Protobuf field definition.** The schema under
+  `app/market_data/providers/upstox_proto/` is Upstox's own, vendored with its
+  SHA256; regenerate with `tools/generate_upstox_proto.py`. A guessed field
+  number decodes a price into the wrong attribute, silently.
+* **Upstox `tick_size` is in paise** (5.0 = Rs 0.05) and `expiry` is epoch
+  milliseconds read in IST. Both verified against the real file, neither
+  documented. Instrument identifiers are looked up and cross-checked against
+  `VERIFIED_INDEX_KEYS`, never constructed.
+* A holiday list being official does not make session timings official, and the
+  F&O circular says nothing about the cash segment. Keep the provenance of each
+  fact separate, per segment.
+* Live access fails closed: no credentials means `LIVE BLOCKED` with a non-zero
+  exit, never a degraded "live" run. Credentials come from the environment only
+  and are registered with the log redactor.
 * **Access logging stays off** (`ACCESS_LOG_ENABLED` in `app/__main__.py`): the
   webhook token is in the URL path. Secret redaction belongs on log *handlers*,
   not loggers.
@@ -103,7 +117,7 @@ authorization.
 ## Commands
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest        # 396 tests, offline
+.\.venv\Scripts\python.exe -m pytest        # 502 tests, offline
 .\.venv\Scripts\python.exe -m app           # local engine on 127.0.0.1:8788
 npm test                                    # pre-existing Node collector tests
 ```

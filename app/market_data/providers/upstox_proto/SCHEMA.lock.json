@@ -1,0 +1,16 @@
+{
+  "bytes": 2259,
+  "documentation_url": "https://upstox.com/developer/api-documentation/v3/get-market-data-feed/",
+  "generated_at_utc": "2026-10-19T23:27:21+00:00",
+  "generated_file": "MarketDataFeedV3_pb2.py",
+  "generator_versions": {
+    "grpcio-tools": "1.68.1",
+    "protobuf": "5.29.3"
+  },
+  "proto_package": "com.upstox.marketdatafeederv3udapi.rpc.proto",
+  "proto_syntax": "proto3",
+  "retrieved_at_utc": "2026-10-19T23:27:21+00:00",
+  "schema_url": "https://assets.upstox.com/feed/market-data-feed/v3/MarketDataFeed.proto",
+  "schema_version": "v3 (from the URL path; the file declares none)",
+  "sha256": "3e1c939dce2c83a3fef91405c5ca268dfa089aae973319f56685f12a5afcf612"
+}

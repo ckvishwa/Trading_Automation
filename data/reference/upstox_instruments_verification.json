@@ -1,0 +1,201 @@
+{
+  "authenticated": false,
+  "compressed_bytes": 1982987,
+  "configured_alias": {
+    "alias": [
+      "NSE_INDEX",
+      "NIFTY"
+    ],
+    "symbol": "NSE:NIFTY"
+  },
+  "duplicate_examples": [],
+  "duplicate_instrument_keys": 0,
+  "index_resolution": {
+    "exchange": "NSE",
+    "exchange_token": "26000",
+    "instrument_key": "NSE_INDEX|Nifty 50",
+    "instrument_type": "INDEX",
+    "name": "Nifty 50",
+    "segment": "NSE_INDEX",
+    "status": "RESOLVED",
+    "trading_symbol": "NIFTY"
+  },
+  "nifty_like_index_records": [
+    [
+      "NSE_INDEX|NIFTY Alpha 50",
+      "NIFTY ALPHA 50",
+      "NIFTY Alpha 50"
+    ],
+    [
+      "NSE_INDEX|NIFTY AlphaLowVol",
+      "NIFTY ALPHALOWVOL",
+      "NIFTY AlphaLowVol"
+    ],
+    [
+      "NSE_INDEX|NIFTY CONSR DURBL",
+      "NIFTY CONSR DURBL",
+      "NIFTY CONSR DURBL"
+    ],
+    [
+      "NSE_INDEX|NIFTY HEALTHCARE",
+      "NIFTY HEALTHCARE",
+      "NIFTY HEALTHCARE"
+    ],
+    [
+      "NSE_INDEX|NIFTY IND DIGITAL",
+      "NIFTY IND DIGITAL",
+      "NIFTY IND DIGITAL"
+    ],
+    [
+      "NSE_INDEX|NIFTY INDIA MFG",
+      "NIFTY INDIA MFG",
+      "NIFTY INDIA MFG"
+    ],
+    [
+      "NSE_INDEX|NIFTY LARGEMID250",
+      "NIFTY LARGEMID250",
+      "NIFTY LARGEMID250"
+    ],
+    [
+      "NSE_INDEX|NIFTY M150 QLTY50",
+      "NIFTY M150 QLTY50",
+      "NIFTY M150 QLTY50"
+    ],
+    [
+      "NSE_INDEX|NIFTY MICROCAP250",
+      "NIFTY MICROCAP250",
+      "NIFTY MICROCAP250"
+    ],
+    [
+      "NSE_INDEX|NIFTY MID SELECT",
+      "MIDCPNIFTY",
+      "NIFTY MID SELECT"
+    ],
+    [
+      "NSE_INDEX|NIFTY MIDCAP 100",
+      "NIFTY MIDCAP 100",
+      "NIFTY MIDCAP 100"
+    ],
+    [
+      "NSE_INDEX|NIFTY MIDCAP 150",
+      "NIFTY MIDCAP 150",
+      "NIFTY MIDCAP 150"
+    ],
+    [
+      "NSE_INDEX|NIFTY MIDSML 400",
+      "NIFTY MIDSML 400",
+      "NIFTY MIDSML 400"
+    ],
+    [
+      "NSE_INDEX|NIFTY OIL AND GAS",
+      "NIFTY OIL AND GAS",
+      "NIFTY OIL AND GAS"
+    ],
+    [
+      "NSE_INDEX|NIFTY SMLCAP 100",
+      "NIFTY SMLCAP 100",
+      "NIFTY SMLCAP 100"
+    ],
+    [
+      "NSE_INDEX|NIFTY SMLCAP 250",
+      "NIFTY SMLCAP 250",
+      "NIFTY SMLCAP 250"
+    ],
+    [
+      "NSE_INDEX|NIFTY SMLCAP 50",
+      "NIFTY SMLCAP 50",
+      "NIFTY SMLCAP 50"
+    ],
+    [
+      "NSE_INDEX|NIFTY TOTAL MKT",
+      "NIFTY TOTAL MKT",
+      "NIFTY TOTAL MKT"
+    ],
+    [
+      "NSE_INDEX|NIFTY100 EQL Wgt",
+      "NIFTY100 EQL WGT",
+      "NIFTY100 EQL Wgt"
+    ],
+    [
+      "NSE_INDEX|NIFTY100 ESG",
+      "NIFTY100 ESG",
+      "NIFTY100 ESG"
+    ],
+    [
+      "NSE_INDEX|NIFTY100 LowVol30",
+      "NIFTY100 LOWVOL30",
+      "NIFTY100 LowVol30"
+    ],
+    [
+      "NSE_INDEX|NIFTY100 Qualty30",
+      "NIFTY100 QUALTY30",
+      "NIFTY100 Qualty30"
+    ],
+    [
+      "NSE_INDEX|NIFTY200 QUALTY30",
+      "NIFTY200 QUALTY30",
+      "NIFTY200 QUALTY30"
+    ],
+    [
+      "NSE_INDEX|NIFTY50 EQL Wgt",
+      "NIFTY50 EQL WGT",
+      "NIFTY50 EQL Wgt"
+    ],
+    [
+      "NSE_INDEX|NIFTY500 MULTICAP",
+      "NIFTY500 MULTICAP",
+      "NIFTY500 MULTICAP"
+    ]
+  ],
+  "note": "Instrument files are a CDN download; no access token was used, and the Upstox documentation does not state whether one is required.",
+  "option_metadata": {
+    "contracts_missing_required_metadata": 0,
+    "expiries": [
+      "2026-10-19",
+      "2026-10-27",
+      "2026-11-03",
+      "2026-11-09",
+      "2026-11-17",
+      "2026-11-23",
+      "2026-12-29",
+      "2027-03-30",
+      "2027-06-29",
+      "2027-09-28",
+      "2027-12-28",
+      "2028-06-27"
+    ],
+    "expiry_count": 18,
+    "expiry_unit_consistent_with_milliseconds": true,
+    "expiry_weekdays": [
+      "Monday",
+      "Tuesday"
+    ],
+    "implausible_expiries": [],
+    "lot_sizes": {
+      "65": 1882
+    },
+    "missing_examples": [],
+    "nearest_expiry": "2026-10-19",
+    "nearest_expiry_calls": 104,
+    "nearest_expiry_contracts": 208,
+    "nearest_expiry_puts": 104,
+    "status": "OK",
+    "strike_max": 25200.0,
+    "strike_min": 20050.0,
+    "strike_step_modes": [
+      [
+        50.0,
+        103
+      ]
+    ],
+    "tick_sizes": {
+      "0.05": 1882
+    }
+  },
+  "parsed_records": 79580,
+  "record_count": 79580,
+  "retrieved_at_utc": "2026-10-19T23:33:46+00:00",
+  "schema": 1,
+  "sha256": "d6670c143b6e6e4b0260e9f6fec2decf0e2c979b3c4b9d2df3cc729cf265a38d",
+  "source_url": "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+}

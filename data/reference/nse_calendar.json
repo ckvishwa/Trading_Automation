@@ -1,22 +1,50 @@
 {
-  "schema_version": 2,
-  "_WARNING": "THIS FILE CONTAINS NO OFFICIALLY VERIFIED DATA. `official_verified_through` is null, so the engine will never report a session as OPEN from it. Entries marked source=unofficial come from third-party broker holiday pages and may only CLOSE the market, never open it. To make the engine usable for live trading decisions, fill this in from the NSE/BSE circulars listed under `sources`, set each session window's source to \"official\", and set `official_verified_through` to the last date the circulars cover.",
-  "_rule": "An unofficial or disputed entry can only make the engine more restrictive. OPEN and PRE_OPEN require an official session window AND a date covered by official_verified_through. A special session with unknown timings yields UNSUPPORTED_SESSION rather than a guess.",
+  "schema_version": 3,
+  "_STATUS": "F&O holidays for 2026 are OFFICIAL, taken from NSE circular NSE/FAOP/71777 dated 2025-12-12. Everything else is not: the cash-segment holiday list comes from a separate circular that has not been read, and no circular consulted states session timings. The engine therefore still reports UNVERIFIED_CALENDAR for ordinary trading days.",
+  "_rule": "An unofficial or disputed entry can only make the engine more restrictive. OPEN and PRE_OPEN require (a) an official holiday list covering that date for that segment AND (b) a session window marked source=official. A special session whose timings are not officially known yields UNSUPPORTED_SESSION, never an assumption of regular hours.",
   "timezone": "Asia/Kolkata",
   "official_verified_through": null,
-  "holiday_coverage": "partial",
   "sources": {
-    "official": [
-      "https://www.nseindia.com/resources/exchange-communication-holidays",
-      "https://www.nseindia.com/products-services/equity-derivatives-trading-schedule-holidays",
-      "https://www.nseindia.com/market-data/market-timings-holidays",
-      "https://www.bseindia.com/static/markets/marketinfo/listholi.aspx"
+    "official_retrieved": [
+      {
+        "segment": "FO",
+        "kind": "trading_holidays",
+        "circular": "NSE/FAOP/71777",
+        "circular_ref_no": "212/2025",
+        "department": "FUTURES & OPTIONS",
+        "circular_date": "2025-12-12",
+        "url": "https://nsearchives.nseindia.com/content/circulars/FAOP71777.pdf",
+        "sha256": "5a2079cd78b2e6b536ef0d28300e63b645721bed22cc82a91facf5945f3296ea",
+        "bytes": 176660,
+        "retrieved_at_utc": "2026-10-19T23:34:58Z",
+        "signed_by": "Khushal Shah, Associate Vice President",
+        "covers": "Trading holidays for the calendar year 2026, F&O segment"
+      }
     ],
-    "retrieval_note": "nseindia.com did not respond to automated retrieval on 2026-10-19 (two 60s timeouts). Every value below was therefore taken from secondary sources or from widely published session timings, and is marked accordingly. None of it is an authenticated reading of a circular."
+    "still_needed": [
+      {
+        "what": "Capital Market (cash) trading holidays for 2026",
+        "why": "The F&O circular covers the derivatives segment only, and the two lists are not guaranteed to match. The cash list must not be inferred from this one.",
+        "where": "https://www.nseindia.com/resources/exchange-communication-holidays"
+      },
+      {
+        "what": "Official session timings per segment, with effective dates",
+        "why": "No circular read here states regular, pre-open or closing session timings. The values below are the widely published ones and are marked unofficial.",
+        "where": "https://www.nseindia.com/market-data/market-timings-holidays"
+      },
+      {
+        "what": "Muhurat Trading timings for 2026-11-08",
+        "why": "The circular says timings 'shall be notified subsequently'. Until a circular states them, the session stays UNSUPPORTED_SESSION.",
+        "where": "NSE circulars"
+      }
+    ],
+    "retrieval_note": "nseindia.com's own HTML pages did not answer automated retrieval on 2026-10-19 (two 60s timeouts). The nsearchives.nseindia.com PDF endpoint did answer, which is how the F&O circular was obtained."
   },
   "segments": {
     "CASH": {
       "description": "NSE Capital Market (equities)",
+      "holidays_official_through": null,
+      "holidays_source_note": "NO official cash holiday list has been read. The entries below are copied from third-party broker pages. They may close a day and can never open one.",
       "sessions": [
         {
           "effective_from": "2000-01-01",
@@ -25,62 +53,61 @@
           "regular_open": "09:15",
           "regular_close": "15:30",
           "source": "unofficial",
-          "note": "Widely published NSE equity timings. Not read from a circular in this session."
+          "note": "Widely published NSE equity timings. Not read from a circular."
         }
       ]
     },
     "FO": {
       "description": "NSE Equity Derivatives",
+      "holidays_official_through": "2026-12-31",
+      "holidays_source_note": "Official: NSE/FAOP/71777 dated 2025-12-12 lists all 2026 F&O trading holidays. Session timings below remain unofficial and are a separate fact.",
       "sessions": [
         {
           "effective_from": "2000-01-01",
           "regular_open": "09:15",
           "regular_close": "15:30",
           "source": "unofficial",
-          "note": "Modelled separately from CASH on purpose: the two segments are not guaranteed to share timings or holidays, and NSE has consulted on extended derivatives hours."
+          "note": "Modelled separately from CASH on purpose: the two segments are not guaranteed to share timings or holidays, and the circular states none."
         }
       ]
     }
   },
   "holidays": [
-    {
-      "date": "2026-10-20",
-      "description": "Dussehra",
-      "segments": ["CASH", "FO"],
-      "source": "unofficial",
-      "evidence": "Zerodha, Groww, Angel One, Bajaj Finserv, Tata Mutual Fund, Choice and Anand Rathi 2026 holiday pages all list Tuesday 2026-10-20 as closed for equity and equity derivatives. No NSE circular was readable."
-    },
-    {
-      "date": "2026-11-10",
-      "description": "Diwali Balipratipada",
-      "segments": ["CASH", "FO"],
-      "source": "unofficial",
-      "evidence": "Multiple third-party 2026 holiday listings."
-    },
-    {
-      "date": "2026-11-24",
-      "description": "Prakash Gurpurb Sri Guru Nanak Dev",
-      "segments": ["CASH", "FO"],
-      "source": "unofficial",
-      "evidence": "Multiple third-party 2026 holiday listings."
-    },
-    {
-      "date": "2026-12-25",
-      "description": "Christmas",
-      "segments": ["CASH", "FO"],
-      "source": "unofficial",
-      "evidence": "Multiple third-party 2026 holiday listings."
-    }
+    {"date": "2026-01-26", "description": "Republic Day", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-03-03", "description": "Holi", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-03-26", "description": "Shri Ram Navami", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-03-31", "description": "Shri Mahavir Jayanti", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-04-03", "description": "Good Friday", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-04-14", "description": "Dr. Baba Saheb Ambedkar Jayanti", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-05-01", "description": "Maharashtra Day", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-05-28", "description": "Bakri Id", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-06-26", "description": "Muharram", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-09-14", "description": "Ganesh Chaturthi", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-10-02", "description": "Mahatma Gandhi Jayanti", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-10-20", "description": "Dussehra", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-11-10", "description": "Diwali-Balipratipada", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-11-24", "description": "Prakash Gurpurb Sri Guru Nanak Dev", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-12-25", "description": "Christmas", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+
+    {"date": "2026-02-15", "description": "Mahashivratri (falls on a Sunday)", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-03-21", "description": "Id-Ul-Fitr / Ramadan Eid (falls on a Saturday)", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+    {"date": "2026-08-15", "description": "Independence Day (falls on a Saturday)", "segments": ["FO"], "source": "official", "circular": "NSE/FAOP/71777"},
+
+    {"date": "2026-10-20", "description": "Dussehra", "segments": ["CASH"], "source": "unofficial", "evidence": "Third-party broker holiday pages. The cash circular has not been read; this entry may close the day and can never open one."},
+    {"date": "2026-11-10", "description": "Diwali-Balipratipada", "segments": ["CASH"], "source": "unofficial", "evidence": "Third-party broker holiday pages."},
+    {"date": "2026-11-24", "description": "Prakash Gurpurb Sri Guru Nanak Dev", "segments": ["CASH"], "source": "unofficial", "evidence": "Third-party broker holiday pages."},
+    {"date": "2026-12-25", "description": "Christmas", "segments": ["CASH"], "source": "unofficial", "evidence": "Third-party broker holiday pages."}
   ],
   "special_sessions": [
     {
-      "date": "2026-10-21",
-      "description": "Muhurat trading (date DISPUTED between sources; one lists 2026-10-21, another ties it to Diwali Laxmi Pujan on 2026-11-08)",
+      "date": "2026-11-08",
+      "description": "Muhurat Trading (NSE/FAOP/71777: 'Muhurat Trading will be conducted on Sunday, November 08, 2026. Timings of Muhurat Trading shall be notified subsequently.')",
       "segments": ["CASH", "FO"],
       "regular_open": null,
       "regular_close": null,
-      "source": "disputed",
-      "evidence": "Third-party sources disagree. Timings deliberately left null so the engine reports UNSUPPORTED_SESSION instead of assuming regular hours."
+      "source": "official",
+      "timings_official": false,
+      "evidence": "The date is official. The timings are explicitly not yet notified, so they are left null and the engine reports UNSUPPORTED_SESSION rather than assuming regular hours on a Sunday."
     }
   ]
 }

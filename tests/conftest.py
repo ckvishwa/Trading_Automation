@@ -57,38 +57,45 @@ def _calendar(
     *,
     official_verified_through: str | None,
     window_source: str,
-    holidays: dict[str, list[dict]] | None = None,
+    holidays: list[dict] | None = None,
     special_sessions: list[dict] | None = None,
 ) -> dict:
+    """A schema-3 calendar.
+
+    `official_verified_through` is applied as each segment's holiday horizon, so
+    a fixture can still be described with one value while the production file
+    carries them per segment.
+    """
+    cash = {
+        "holidays_official_through": official_verified_through,
+        "sessions": [
+            {
+                "effective_from": "2000-01-01",
+                "pre_open_start": "09:00",
+                "pre_open_end": "09:08",
+                "regular_open": "09:15",
+                "regular_close": "15:30",
+                "source": window_source,
+            }
+        ],
+    }
+    fo = {
+        "holidays_official_through": official_verified_through,
+        "sessions": [
+            {
+                "effective_from": "2000-01-01",
+                "regular_open": "09:15",
+                "regular_close": "15:30",
+                "source": window_source,
+            }
+        ],
+    }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "timezone": "Asia/Kolkata",
         "official_verified_through": official_verified_through,
         "holiday_coverage": "test-fixture",
-        "segments": {
-            "CASH": {
-                "sessions": [
-                    {
-                        "effective_from": "2000-01-01",
-                        "pre_open_start": "09:00",
-                        "pre_open_end": "09:08",
-                        "regular_open": "09:15",
-                        "regular_close": "15:30",
-                        "source": window_source,
-                    }
-                ]
-            },
-            "FO": {
-                "sessions": [
-                    {
-                        "effective_from": "2000-01-01",
-                        "regular_open": "09:15",
-                        "regular_close": "15:30",
-                        "source": window_source,
-                    }
-                ]
-            },
-        },
+        "segments": {"CASH": cash, "FO": fo},
         "holidays": (holidays or []),
         "special_sessions": (special_sessions or []),
     }

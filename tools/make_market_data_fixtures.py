@@ -2,8 +2,11 @@
 
 import gzip
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 OUT = Path("examples/fixtures")
 OUT.mkdir(parents=True, exist_ok=True)
@@ -115,77 +118,67 @@ option_path.write_text(
 print("wrote", option_path, len(option_frames), "frames")
 
 # ------------------------------------------------------- instrument master
+# Record shape copied from the REAL downloaded NSE file (2026-10-19, sha256
+# d6670c14...), not from the documentation: tick_size in paise, lot_size 65,
+# and the asset_* fields the docs do not mention. Values are synthetic; the
+# shape is not.
+OPTION_TOKENS = {"ce_near": 43309, "pe_near": 43310, "ce_far": 43311}
+
+
+def expiry_millis(year: int, month: int, day: int) -> int:
+    # The real file stamps expiry at 23:59:59 IST, i.e. 18:29:59Z.
+    return int(
+        datetime(year, month, day, 18, 29, 59, tzinfo=timezone.utc).timestamp() * 1000
+    )
+
+
+def option_record(token: int, strike: int, kind: str, expiry: int, label: str) -> dict:
+    return {
+        "asset_key": KEY,
+        "asset_symbol": "NIFTY",
+        "asset_type": "INDEX",
+        "exchange": "NSE",
+        "exchange_token": str(token),
+        "expiry": expiry,
+        "freeze_quantity": 3510.0,
+        "instrument_key": f"NSE_FO|{token}",
+        "instrument_type": kind,
+        "lot_size": 65,
+        "minimum_lot": 65,
+        "name": "NIFTY",
+        "qty_multiplier": 1.0,
+        "segment": "NSE_FO",
+        "strike_price": float(strike),
+        # PAISE. 5.0 == Rs 0.05. Shipping this as rupees would round every
+        # option price a hundredfold wrong.
+        "tick_size": 5.0,
+        "trading_symbol": f"NIFTY {strike} {kind} {label}",
+        "underlying_key": KEY,
+        "underlying_symbol": "NIFTY",
+        "underlying_type": "INDEX",
+        "weekly": True,
+    }
+
+
+NEAR_EXPIRY = expiry_millis(2026, 10, 27)
+FAR_EXPIRY = expiry_millis(2026, 11, 3)
+
 instruments = [
     {
-        "instrument_key": KEY,
+        # Verified verbatim from the real file: the key spells the index name,
+        # while trading_symbol is the derivatives ticker.
+        "cas_eligible": True,
+        "exchange": "NSE",
         "exchange_token": "26000",
-        "trading_symbol": "Nifty 50",
-        "name": "NIFTY 50",
-        "segment": "NSE_INDEX",
-        "exchange": "NSE",
+        "instrument_key": KEY,
         "instrument_type": "INDEX",
+        "name": "Nifty 50",
+        "segment": "NSE_INDEX",
+        "trading_symbol": "NIFTY",
     },
-    {
-        "instrument_key": "NSE_FO|43309",
-        "exchange_token": "43309",
-        "trading_symbol": "NIFTY 24000 CE 29 OCT 26",
-        "name": "NIFTY",
-        "segment": "NSE_FO",
-        "exchange": "NSE",
-        "instrument_type": "CE",
-        "lot_size": 75,
-        "tick_size": 0.05,
-        "freeze_quantity": 1800.0,
-        "minimum_lot": 75,
-        "expiry": int(
-            datetime(2026, 10, 29, 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000
-        ),
-        "strike_price": 24000.0,
-        "underlying_key": KEY,
-        "underlying_symbol": "NIFTY",
-        "underlying_type": "INDEX",
-        "weekly": True,
-    },
-    {
-        "instrument_key": "NSE_FO|43310",
-        "exchange_token": "43310",
-        "trading_symbol": "NIFTY 24000 PE 29 OCT 26",
-        "name": "NIFTY",
-        "segment": "NSE_FO",
-        "exchange": "NSE",
-        "instrument_type": "PE",
-        "lot_size": 75,
-        "tick_size": 0.05,
-        "minimum_lot": 75,
-        "expiry": int(
-            datetime(2026, 10, 29, 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000
-        ),
-        "strike_price": 24000.0,
-        "underlying_key": KEY,
-        "underlying_symbol": "NIFTY",
-        "underlying_type": "INDEX",
-        "weekly": True,
-    },
-    {
-        "instrument_key": "NSE_FO|43311",
-        "exchange_token": "43311",
-        "trading_symbol": "NIFTY 24100 CE 05 NOV 26",
-        "name": "NIFTY",
-        "segment": "NSE_FO",
-        "exchange": "NSE",
-        "instrument_type": "CE",
-        "lot_size": 75,
-        "tick_size": 0.05,
-        "minimum_lot": 75,
-        "expiry": int(
-            datetime(2026, 11, 5, 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000
-        ),
-        "strike_price": 24100.0,
-        "underlying_key": KEY,
-        "underlying_symbol": "NIFTY",
-        "underlying_type": "INDEX",
-        "weekly": True,
-    },
+    option_record(OPTION_TOKENS["ce_near"], 24000, "CE", NEAR_EXPIRY, "27 OCT 26"),
+    option_record(OPTION_TOKENS["pe_near"], 24000, "PE", NEAR_EXPIRY, "27 OCT 26"),
+    option_record(OPTION_TOKENS["ce_far"], 24100, "CE", FAR_EXPIRY, "03 NOV 26"),
 ]
 instrument_path = OUT / "upstox-instruments-sample.json.gz"
 instrument_path.write_bytes(gzip.compress(json.dumps(instruments).encode("utf-8")))
@@ -301,11 +294,21 @@ from them carries mock or fixture provenance.
 | `upstox-instruments-sample.json.gz` | Gzipped JSON array, instrument-file record shape | Instrument master parsing, expiry and option-chain queries |
 | `fyers-symbol-master-sample.json` | JSON object keyed by `symTicker` | FYERS symbol master parsing, including an inactive `tradeStatus` row |
 | `fyers-expired-option-history.json` | `s`/`columns`/`candles` history response | Expired-F&O parsing with null OI and Greeks on one candle |
+| `upstox-feed-session.binpb` | **Real Protobuf wire bytes**, length-prefixed (4-byte big-endian) | End-to-end replay through the genuine decoder: a status frame, a snapshot, an LTPC price path with a duplicate and an out-of-order tick, a deliberately malformed frame, and one five-level option quote |
 
-The frames are the **decoded** structure, not Protobuf bytes. Upstox's live feed
-is Protobuf-encoded, and generating the stubs needs the published `.proto` plus
-`protoc`; `JsonFeedDecoder` reads these fixtures through exactly the
-normalization the live path uses, so only the wire decode is left to swap in.
+`upstox-feed-session.binpb` holds genuine Protobuf wire bytes, serialized with
+the classes generated from Upstox's official schema, and is what the end-to-end
+replay test runs. Protobuf messages are not self-delimiting -- concatenating two
+yields a third valid message with later fields overwriting earlier ones -- so
+each frame carries a 4-byte big-endian length prefix.
+
+The `.jsonl` files hold the **decoded** structure instead, read by
+`JsonFeedDecoder`. They stay useful because protobuf's own JSON mapping produces
+exactly that shape, so a hand-written case can be added without serializing it.
+
+The instrument fixture's record shape is copied from the real downloaded NSE
+file: `tick_size` in paise, `lot_size` 65, and the `asset_*` fields the
+documentation does not mention.
 
 Timestamps are anchored to 09:15 IST on Monday 2026-10-19 so bars line up with
 the engine's session-open grid. Regenerate with the script referenced in
@@ -314,3 +317,96 @@ the engine's session-open grid. Regenerate with the script referenced in
     encoding="utf-8",
 )
 print("wrote", readme)
+
+
+# ------------------------------------------------- real Protobuf feed frames
+# Length-prefixed wire bytes, so the end-to-end replay runs the genuine decoder
+# rather than a JSON stand-in. Built with the generated classes, which come from
+# Upstox's official schema.
+from app.market_data.providers import upstox_proto as _up  # noqa: E402
+from app.research.market_replay import write_length_prefixed  # noqa: E402
+
+_INDEX_KEY = "NSE_INDEX|Nifty 50"
+_OPTION_KEY = "NSE_FO|50978"
+
+
+def _ms(moment: datetime) -> int:
+    return int(moment.timestamp() * 1000)
+
+
+def _status_frame() -> bytes:
+    response = _up.FeedResponse(type=_up.Type.market_info, currentTs=_ms(SESSION_OPEN))
+    response.marketInfo.segmentStatus["NSE_FO"] = _up.MarketStatus.NORMAL_OPEN
+    response.marketInfo.segmentStatus["NSE_EQ"] = _up.MarketStatus.NORMAL_OPEN
+    return response.SerializeToString()
+
+
+def _snapshot_frame() -> bytes:
+    response = _up.FeedResponse(type=_up.Type.initial_feed, currentTs=_ms(SESSION_OPEN))
+    feed = response.feeds[_INDEX_KEY]
+    feed.ltpc.ltp = 25_000.0
+    feed.ltpc.ltt = _ms(SESSION_OPEN)
+    feed.ltpc.ltq = 25
+    feed.ltpc.cp = 24_980.0
+    return response.SerializeToString()
+
+
+def _ltpc_frame(minutes: float, price: float, quantity: int = 50) -> bytes:
+    moment = SESSION_OPEN + timedelta(minutes=minutes)
+    response = _up.FeedResponse(type=_up.Type.live_feed, currentTs=_ms(moment))
+    feed = response.feeds[_INDEX_KEY]
+    feed.ltpc.ltp = price
+    feed.ltpc.ltt = _ms(moment)
+    feed.ltpc.ltq = quantity
+    return response.SerializeToString()
+
+
+def _option_frame(minutes: float, bid: float, ask: float) -> bytes:
+    moment = SESSION_OPEN + timedelta(minutes=minutes)
+    response = _up.FeedResponse(type=_up.Type.live_feed, currentTs=_ms(moment))
+    feed = response.feeds[_OPTION_KEY]
+    feed.requestMode = _up.RequestMode.full_d5
+    market = feed.fullFeed.marketFF
+    market.ltpc.ltp = round((bid + ask) / 2, 2)
+    market.ltpc.ltt = _ms(moment)
+    market.ltpc.ltq = 65
+    for level in range(5):
+        market.marketLevel.bidAskQuote.add(
+            bidQ=650 + level * 65,
+            bidP=round(bid - level * 0.05, 2),
+            askQ=780 + level * 65,
+            askP=round(ask + level * 0.05, 2),
+        )
+    market.optionGreeks.delta = 0.52
+    market.oi = 1_500_000
+    market.iv = 0.1187
+    market.vtt = 45_000
+    return response.SerializeToString()
+
+
+_frames = [_status_frame(), _snapshot_frame()]
+# Same price path as the JSON fixture, so the two recordings describe one
+# session: a duplicate tick, an out-of-order tick inside the open bar, and a
+# three-bucket gap are all present on purpose.
+for _minutes, _price in [
+    (1, 25_012.5),
+    (2, 25_004.0),
+    (2, 25_004.0),
+    (4, 25_020.0),
+    (3, 25_008.0),
+    (5, 25_018.0),
+    (6, 25_040.0),
+    (7, 25_031.0),
+    (9, 25_035.5),
+    (10, 25_050.0),
+    (25, 25_061.0),
+]:
+    _frames.append(_ltpc_frame(_minutes, _price))
+# One malformed frame, to prove a bad frame is counted and skipped rather than
+# interpolated or fatal.
+_frames.append(b"\xff\xff\xff\xff")
+_frames.append(_option_frame(11, 120.25, 120.75))
+
+_pb_path = OUT / "upstox-feed-session.binpb"
+write_length_prefixed(_pb_path, _frames)
+print("wrote", _pb_path, len(_frames), "length-prefixed Protobuf frames")

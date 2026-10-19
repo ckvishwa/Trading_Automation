@@ -19,13 +19,13 @@ import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
 from app.signals.schemas import NormalizedSignalEvent, ReasonCode
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -63,6 +63,29 @@ CREATE TABLE IF NOT EXISTS signal_events (
 
 CREATE INDEX IF NOT EXISTS signal_events_status_idx
     ON signal_events (status, received_at);
+
+CREATE TABLE IF NOT EXISTS market_candles (
+    symbol         TEXT NOT NULL,
+    timeframe      TEXT NOT NULL,
+    open_time      TEXT NOT NULL,
+    close_time     TEXT NOT NULL,
+    open           REAL NOT NULL,
+    high           REAL NOT NULL,
+    low            REAL NOT NULL,
+    close          REAL NOT NULL,
+    volume         INTEGER,
+    open_interest  INTEGER,
+    tick_count     INTEGER,
+    provider       TEXT NOT NULL,
+    is_mock        INTEGER NOT NULL,
+    endpoint       TEXT,
+    fetched_at     TEXT,
+    stored_at      TEXT NOT NULL,
+    PRIMARY KEY (symbol, timeframe, open_time)
+);
+
+CREATE INDEX IF NOT EXISTS market_candles_time_idx
+    ON market_candles (symbol, timeframe, close_time);
 
 CREATE TABLE IF NOT EXISTS ingest_rejections (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,6 +295,75 @@ class EventStore:
             signal_id=existing["signal_id"],
             reason=ReasonCode.DUPLICATE_SIGNAL,
         )
+
+    def store_candle(self, candle, *, stored_at: datetime | None = None) -> bool:
+        """Persist one completed candle. Returns False if it was already stored.
+
+        The primary key is (symbol, timeframe, open_time), so replaying the same
+        session twice cannot double-count a bar and cannot rewrite one. A bar
+        that is already present is left exactly as it was: silently overwriting
+        it would let a later, different reading of the same interval replace the
+        one a decision may already have been made on.
+        """
+        if candle.provenance is None:
+            raise ValueError(
+                "refusing to store a candle with no provenance; a stored price "
+                "must say which provider produced it and whether it is mock"
+            )
+        stamp = (stored_at or datetime.now(tz=timezone.utc)).isoformat()
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO market_candles ("
+                " symbol, timeframe, open_time, close_time, open, high, low, close,"
+                " volume, open_interest, tick_count, provider, is_mock, endpoint,"
+                " fetched_at, stored_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(symbol, timeframe, open_time) DO NOTHING",
+                (
+                    candle.symbol,
+                    candle.timeframe,
+                    candle.open_time.isoformat(),
+                    candle.close_time.isoformat(),
+                    candle.open,
+                    candle.high,
+                    candle.low,
+                    candle.close,
+                    candle.volume,
+                    candle.open_interest,
+                    candle.tick_count,
+                    candle.provenance.provider,
+                    int(candle.provenance.is_mock),
+                    candle.provenance.endpoint,
+                    candle.provenance.fetched_at.isoformat(),
+                    stamp,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def candles(
+        self, symbol: str | None = None, timeframe: str | None = None, limit: int = 500
+    ) -> list[dict]:
+        clauses, parameters = [], []
+        if symbol is not None:
+            clauses.append("symbol = ?")
+            parameters.append(symbol)
+        if timeframe is not None:
+            clauses.append("timeframe = ?")
+            parameters.append(timeframe)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM market_candles" + where
+                + " ORDER BY symbol, timeframe, open_time LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+        return [{**dict(row), "is_mock": bool(row["is_mock"])} for row in rows]
+
+    def count_candles(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM market_candles").fetchone()
+        return int(row["n"])
 
     def mark_decided(self, signal_id: str) -> None:
         with self._transaction() as conn:

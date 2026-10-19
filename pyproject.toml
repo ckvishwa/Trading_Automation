@@ -10,6 +10,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "numpy>=2.1",
     "pandas>=2.2",
+    # Pinned, not floated: the generated Upstox schema module carries a runtime
+    # version guard, so the runtime must not drift away from the generator.
+    # Regenerate with tools/generate_upstox_proto.py after changing this.
+    "protobuf==5.29.3",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +21,16 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
+]
+# Only needed by tools/upstox_live_smoke.py, which is the only websocket client
+# in the project. Not a runtime import for the engine.
+live = [
+    "websockets>=13.1",
+]
+# Only needed to regenerate the vendored Protobuf module; not a runtime import.
+codegen = [
+    "grpcio-tools==1.68.1",
+    "protobuf==5.29.3",
 ]
 
 [build-system]

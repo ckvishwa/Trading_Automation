@@ -7,14 +7,22 @@ Rules this module exists to enforce:
 2. Exchange schedules are data, never code. They come from a calendar file whose
    shape is documented in `data/reference/nse_calendar.json`.
 3. **Unofficial data may only close the market, never open it.** `OPEN` and
-   `PRE_OPEN` require both an official session window and a date inside
-   `official_verified_through`. A holiday sourced from a broker's website can
-   still close a day, because being wrongly closed costs a missed trade while
-   being wrongly open costs a trade placed into a market that was not there.
+   `PRE_OPEN` require both an official session window and a date covered by an
+   official holiday list for that segment. A holiday sourced from a broker's
+   website can still close a day, because being wrongly closed costs a missed
+   trade while being wrongly open costs a trade placed into a market that was
+   not there.
+4. **Holiday provenance and timing provenance are separate facts, per segment.**
+   NSE publishes the derivatives holiday list in its own circular, which states
+   no session timings at all. So an official 2026 F&O holiday list does not make
+   the F&O session *timings* official, and does not say anything about the cash
+   segment. Each segment carries its own `holidays_official_through`.
 4. Timings are **effective-dated**: a segment holds a list of session windows,
    each valid from a date, so a timing change does not rewrite history.
 5. A special session whose timings are unknown or disputed yields
-   `UNSUPPORTED_SESSION`. Nothing here falls back to regular hours.
+   `UNSUPPORTED_SESSION`. Nothing here falls back to regular hours. Special
+   sessions are checked **before** the weekend rule, because that is exactly
+   what they are for: NSE's 2026 Muhurat session falls on a Sunday.
 
 Cash and derivatives are separate segments because their timings and holiday
 lists are not guaranteed to match.
@@ -31,7 +39,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
-SUPPORTED_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSION = 3
 
 
 class Segment(StrEnum):
@@ -156,9 +164,21 @@ class SessionCalendar:
         verified = payload.get("official_verified_through")
         self._verified_through = date.fromisoformat(verified) if verified else None
         self._holiday_coverage = payload.get("holiday_coverage", "unknown")
+        self._sources = payload.get("sources", {})
+
+        # Per-segment holiday coverage. NSE's F&O circular can be official for
+        # 2026 while the cash list has never been read, so one global horizon
+        # would either overstate cash or understate derivatives.
+        self._segment_horizons: dict[str, date | None] = {}
+        self._segment_notes: dict[str, str | None] = {}
 
         self._windows: dict[str, tuple[SessionWindow, ...]] = {}
         for segment_name, segment_payload in payload["segments"].items():
+            horizon = segment_payload.get("holidays_official_through")
+            self._segment_horizons[segment_name] = (
+                date.fromisoformat(horizon) if horizon else None
+            )
+            self._segment_notes[segment_name] = segment_payload.get("holidays_source_note")
             windows = sorted(
                 (_parse_window(item) for item in segment_payload["sessions"]),
                 key=lambda window: window.effective_from,
@@ -186,9 +206,21 @@ class SessionCalendar:
     def holiday_coverage(self) -> str:
         return self._holiday_coverage
 
-    def covers(self, trade_date: date) -> bool:
-        """Whether official data covers this date."""
-        return self._verified_through is not None and trade_date <= self._verified_through
+    @property
+    def sources(self) -> dict:
+        """Provenance of the data in this calendar, including circular refs."""
+        return self._sources
+
+    def holidays_official_through(self, segment: Segment = Segment.FO) -> date | None:
+        return self._segment_horizons.get(segment.value, self._verified_through)
+
+    def holiday_source_note(self, segment: Segment = Segment.FO) -> str | None:
+        return self._segment_notes.get(segment.value)
+
+    def covers(self, trade_date: date, segment: Segment = Segment.FO) -> bool:
+        """Whether an official holiday list covers this date for this segment."""
+        horizon = self.holidays_official_through(segment)
+        return horizon is not None and trade_date <= horizon
 
     def windows(self, segment: Segment = Segment.FO) -> tuple[SessionWindow, ...]:
         return self._windows[segment.value]
@@ -248,7 +280,7 @@ class SessionCalendar:
         local = moment.astimezone(IST)
         trade_date = local.date()
         local_time = local.time().replace(second=0, microsecond=0)
-        verified = self.covers(trade_date)
+        verified = self.covers(trade_date, segment)
 
         def status(state: SessionState, detail: str | None = None) -> SessionStatus:
             return SessionStatus(
@@ -260,20 +292,9 @@ class SessionCalendar:
                 detail=detail,
             )
 
-        # Weekend is a property of the date, so it is reported whatever the
-        # calendar's provenance.
-        if local.weekday() >= 5:
-            return status(SessionState.WEEKEND)
-
-        # A holiday closes the day regardless of source trust: unofficial data
-        # is allowed to close the market, only never to open it.
-        holiday = self._match(self._holidays, trade_date, segment)
-        if holiday is not None:
-            return status(
-                SessionState.HOLIDAY,
-                f"{holiday.description} [source={holiday.source.value}]",
-            )
-
+        # Special sessions are checked first, and before the weekend rule,
+        # because overriding the ordinary calendar is their entire purpose:
+        # NSE's 2026 Muhurat session is on Sunday 2026-11-08.
         special = self._match(self._special, trade_date, segment)
         if special is not None:
             if (
@@ -293,6 +314,20 @@ class SessionCalendar:
                 return status(SessionState.OPEN, special.description)
             return status(SessionState.CLOSED, special.description)
 
+        # Weekend is a property of the date, so it is reported whatever the
+        # calendar's provenance.
+        if local.weekday() >= 5:
+            return status(SessionState.WEEKEND)
+
+        # A holiday closes the day regardless of source trust: unofficial data
+        # is allowed to close the market, only never to open it.
+        holiday = self._match(self._holidays, trade_date, segment)
+        if holiday is not None:
+            return status(
+                SessionState.HOLIDAY,
+                f"{holiday.description} [source={holiday.source.value}]",
+            )
+
         window = self.window_for(trade_date, segment)
         if window is None:
             return status(
@@ -305,7 +340,8 @@ class SessionCalendar:
         if not verified:
             return status(
                 SessionState.UNVERIFIED_CALENDAR,
-                f"official_verified_through={self._verified_through}",
+                f"{segment.value} holidays_official_through="
+                f"{self.holidays_official_through(segment)}",
             )
         if not window.is_official:
             return status(

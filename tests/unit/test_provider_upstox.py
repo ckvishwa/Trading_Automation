@@ -42,6 +42,13 @@ def test_instrument_master_loads_the_fixture(master):
 def test_index_resolves_through_a_configured_alias(master):
     instrument = master.index_instrument("NSE:NIFTY")
     assert instrument.provider_key == INDEX_KEY
+    # Verified against the real NSE file: the key spells the index name while
+    # trading_symbol is the derivatives ticker. An alias written against the
+    # key's spelling does not resolve, which is how this was found.
+    assert instrument.provider_key == upstox.VERIFIED_INDEX_KEYS["NSE:NIFTY"]
+    assert instrument.extra["trading_symbol"] == "NIFTY"
+    assert instrument.extra["name"] == "Nifty 50"
+    assert instrument.extra["exchange_token"] == "26000"
     assert instrument.segment == "NSE_INDEX"
     assert instrument.extra["instrument_type"] == "INDEX"
     assert instrument.provenance.is_mock is False
@@ -50,7 +57,7 @@ def test_index_resolves_through_a_configured_alias(master):
 
 def test_an_unmapped_symbol_is_not_guessed(master):
     with pytest.raises(DataUnavailable, match="no Upstox alias configured"):
-        master.resolve("NSE:MIDCPNIFTY")
+        master.resolve("NSE:NIFTYNEXT50")
 
 
 def test_a_mapped_symbol_absent_from_the_file_raises(master):
@@ -69,21 +76,80 @@ def test_option_fields_come_from_the_record_not_from_a_pattern(master):
     call = master.by_provider_key("NSE_FO|43309")
     assert call.option_type is OptionType.CE  # from instrument_type, not option_type
     assert call.strike == 24_000.0
-    assert call.lot_size == 75
-    assert call.tick_size == 0.05
-    assert call.expiry == date(2026, 10, 30)  # 23:59:59Z is 05:29 IST the next day
+    # Observed on every NIFTY contract in the real file.
+    assert call.lot_size == 65
+    assert call.extra["minimum_lot"] == 65
+    assert call.extra["freeze_quantity"] == 3510.0
+    assert call.expiry == date(2026, 10, 27)
     assert call.underlying_symbol == "NIFTY"
+    assert call.extra["underlying_key"] == INDEX_KEY
     assert call.extra["weekly"] is True
 
 
+def test_tick_size_is_converted_from_paise_to_rupees(master):
+    """The published `tick_size` is in paise, and the docs do not say so.
+
+    NIFTY options carry 5.0 and trade in Rs 0.05 ticks; NSE equities carry
+    1.0/5.0/10.0/50.0/100.0 against the Rs 0.01-Rs 1.00 tick regime. Shipping
+    the raw number as rupees would round every option price a hundredfold wrong.
+    """
+    call = master.by_provider_key("NSE_FO|43309")
+    assert call.tick_size == pytest.approx(0.05)
+    assert call.extra["tick_size_raw"] == 5.0
+    assert call.extra["tick_size_unit"] == "paise"
+    assert upstox.TICK_SIZE_IS_PAISE is True
+
+
+def test_a_non_positive_tick_size_is_refused():
+    record = {
+        "instrument_key": "NSE_FO|1",
+        "trading_symbol": "X",
+        "segment": "NSE_FO",
+        "instrument_type": "CE",
+        "tick_size": 0,
+        "lot_size": 65,
+        "strike_price": 100.0,
+        "expiry": 1798568999000,
+    }
+    with pytest.raises(MarketDataError, match="non-positive tick_size"):
+        upstox.UpstoxInstrumentMaster().load_records([record], FETCHED_AT)
+
+
+@pytest.mark.parametrize(
+    "dropped", ["lot_size", "tick_size", "strike_price", "expiry"]
+)
+def test_an_option_missing_tradable_metadata_is_rejected(dropped):
+    # An option without a lot size, tick, strike or expiry cannot be sized or
+    # priced. Defaulting any of them is a wrong order waiting to happen.
+    record = {
+        "instrument_key": "NSE_FO|2",
+        "trading_symbol": "NIFTY 24000 CE 27 OCT 26",
+        "segment": "NSE_FO",
+        "instrument_type": "CE",
+        "tick_size": 5.0,
+        "lot_size": 65,
+        "strike_price": 24000.0,
+        "expiry": 1798568999000,
+    }
+    del record[dropped]
+    with pytest.raises(MarketDataError, match="ambiguous option contract"):
+        upstox.UpstoxInstrumentMaster().load_records([record], FETCHED_AT)
+
+
+def test_a_non_option_record_needs_no_strike_or_lot_size(master):
+    # The index record carries none of them, and must still load.
+    index = master.index_instrument("NSE:NIFTY")
+    assert index.strike is None and index.lot_size is None and index.expiry is None
+
+
 def test_option_expiries_are_listed_from_real_contracts(master):
-    assert master.option_expiries("NSE:NIFTY") == (date(2026, 10, 30), date(2026, 11, 6))
+    assert master.option_expiries("NSE:NIFTY") == (date(2026, 10, 27), date(2026, 11, 3))
 
 
 def test_option_contracts_filter_by_expiry_and_type(master):
-    both = master.option_contracts("NSE:NIFTY", date(2026, 10, 30))
+    both = master.option_contracts("NSE:NIFTY", date(2026, 10, 27))
     assert [instrument.option_type for instrument in both] == [OptionType.CE, OptionType.PE]
-    calls = master.option_contracts("NSE:NIFTY", date(2026, 10, 30), OptionType.CE)
+    calls = master.option_contracts("NSE:NIFTY", date(2026, 10, 27), OptionType.CE)
     assert len(calls) == 1 and calls[0].provider_key == "NSE_FO|43309"
 
 
@@ -185,11 +251,43 @@ def test_expiry_is_taken_in_ist_not_utc():
     assert upstox.expiry_to_date(stamp) == date(2026, 10, 30)
 
 
-def test_the_expiry_unit_is_flagged_unverified():
-    # The documentation types `expiry` only as "date"; milliseconds is inferred.
-    assert upstox.EXPIRY_UNIT_VERIFIED is False
+def test_the_verification_flags_say_exactly_what_was_checked():
+    # Expiry units were verified against the real file; the feed's timezone and
+    # anything needing an account were not.
+    assert upstox.EXPIRY_UNIT_VERIFIED is True
+    assert "upstox_instruments_verification" in upstox.EXPIRY_UNIT_EVIDENCE
     assert upstox.FEED_TIMEZONE_VERIFIED is False
     assert upstox.VERIFIED_AGAINST_LIVE_ACCOUNT is False
+
+
+def test_the_recorded_verification_evidence_matches_the_code():
+    """The verification record and the aliases must not drift apart.
+
+    `tools/verify_upstox_instruments.py` wrote this record from the real file;
+    if someone edits an alias without re-running it, this fails.
+    """
+    import json
+
+    record = json.loads(
+        (PROJECT_ROOT / "data" / "reference" / "upstox_instruments_verification.json")
+        .read_text("utf-8")
+    )
+    assert record["source_url"] == upstox.INSTRUMENT_FILES["NSE"]
+    assert len(record["sha256"]) == 64
+    assert record["authenticated"] is False
+    assert record["duplicate_instrument_keys"] == 0
+    resolution = record["index_resolution"]
+    assert resolution["status"] == "RESOLVED"
+    assert resolution["instrument_key"] == upstox.VERIFIED_INDEX_KEYS["NSE:NIFTY"]
+    assert resolution["trading_symbol"] == upstox.DEFAULT_SYMBOL_ALIASES["NSE:NIFTY"][1]
+    options = record["option_metadata"]
+    assert options["status"] == "OK"
+    assert options["expiry_unit_consistent_with_milliseconds"] is True
+    assert options["implausible_expiries"] == []
+    assert options["contracts_missing_required_metadata"] == 0
+    # Lot and tick come from the file, never from a constant in the engine.
+    assert options["lot_sizes"] == {"65": 1882}
+    assert options["tick_sizes"] == {"0.05": 1882}
 
 
 # --- rate limiting ------------------------------------------------------------
@@ -322,11 +420,11 @@ def frames(path: str) -> list[dict]:
     ]
 
 
-def test_the_protobuf_decoder_says_exactly_what_is_missing():
-    with pytest.raises(CredentialsMissing) as caught:
-        upstox.ProtobufFeedDecoder().decode(b"\x00")
-    assert "MarketDataFeed.proto" in str(caught.value)
-    assert "protoc" in str(caught.value)
+def test_the_decoder_reports_the_schema_it_was_generated_from():
+    # Full decoder coverage lives in tests/unit/test_upstox_protobuf.py.
+    lock = upstox.ProtobufFeedDecoder().schema_lock
+    assert lock["schema_url"] == upstox.FEED_PROTO_URL
+    assert len(lock["sha256"]) == 64
 
 
 def test_a_non_json_fixture_frame_is_rejected():
@@ -444,7 +542,7 @@ def test_malformed_ltpc_raises_rather_than_producing_a_price(ltpc, message):
 
 def test_an_unrecognised_feed_payload_shape_raises():
     normalizer = upstox.UpstoxFeedNormalizer()
-    with pytest.raises(MarketDataError, match="unrecognised feed payload"):
+    with pytest.raises(MarketDataError, match="carries no ltpc, fullFeed"):
         normalizer.normalize_message(
             {"type": "live_feed", "feeds": {INDEX_KEY: {"somethingElse": {}}}}
         )

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.logging_setup import configure_logging
+from app.market_data.providers.upstox import ProtobufFeedDecoder
 from app.market_data.session import Segment, SessionCalendar
 from app.research.replay import SignalReplay
 from app.signals.htr_adapter import policy_from_settings
@@ -42,6 +43,23 @@ def main(argv: list[str] | None = None) -> int:
         help="modelled gap between an alert firing and the engine receiving it",
     )
 
+    market = subparsers.add_parser(
+        "market-replay", help="replay recorded Protobuf market-data frames"
+    )
+    market.add_argument(
+        "--frames",
+        required=True,
+        type=Path,
+        help="length-prefixed Protobuf frames, e.g. examples/fixtures/upstox-feed-session.binpb",
+    )
+    market.add_argument("--symbol", default="NSE:NIFTY")
+    market.add_argument("--timeframe", default="5m")
+    market.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="use a throwaway database instead of the configured one",
+    )
+
     args = parser.parse_args(argv)
     configure_logging()
     settings = get_settings()
@@ -57,6 +75,43 @@ def main(argv: list[str] | None = None) -> int:
         database_path = Path(tempfile.mkdtemp(prefix="replay-")) / "replay.db"
     else:
         database_path = settings.database_path
+
+    if args.command == "market-replay":
+        from datetime import datetime, timezone
+
+        from app.research.market_replay import MarketDataReplay
+
+        store = EventStore(database_path)
+        try:
+            engine = MarketDataReplay.for_calendar(
+                store,
+                calendar,
+                symbol=args.symbol,
+                timeframe=args.timeframe,
+                on=datetime.now(tz=timezone.utc),
+                segment=Segment.FO,
+            )
+            summary = engine.run_file(args.frames)
+            stored = store.count_candles()
+        finally:
+            store.close()
+        print(
+            json.dumps(
+                {
+                    "database": str(database_path),
+                    "dry_run": bool(args.dry_run),
+                    "mode": settings.trading_mode,
+                    "live_orders": False,
+                    "frames_file": str(args.frames),
+                    "schema_sha256": ProtobufFeedDecoder().schema_lock["sha256"],
+                    **summary.as_dict(),
+                    "candles_in_store": stored,
+                    "builder_stats": vars(engine.stats),
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     store = EventStore(database_path)
     try:
