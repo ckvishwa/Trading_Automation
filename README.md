@@ -9,7 +9,7 @@ This repository now holds **two** things. Read this first so you run the right o
 | Port | 8788 | 8787 |
 | Webhook path | `/v1/webhooks/tradingview/<WEBHOOK_TOKEN>` | `/alert/<ALERT_KEY>` |
 | Store | `data/engine.db` (SQLite WAL) | `data/accepted-signals.jsonl` |
-| Tests | `.\.venv\Scripts\python.exe -m pytest` (223) | `npm test` (6) |
+| Tests | `.\.venv\Scripts\python.exe -m pytest` (396) | `npm test` (6) |
 
 Point your TradingView alert at **one** of them. Running both against the same
 alert double-counts the signal in two separate journals.
@@ -52,14 +52,18 @@ of the Half Trend Regression indicator, is in [`pine/README.md`](pine/README.md)
 |---|---|
 | M0 repository audit | PASS -- [`docs/AUDIT_M0.md`](docs/AUDIT_M0.md) |
 | M1 HTR signal contract | PARTIAL -- genuine Pine v5 source held and analysed ([`pine/HTR_ANALYSIS.md`](pine/HTR_ANALYSIS.md)); conditions, defaults and display-only inputs verified; historical repaint ruled out offline. Awaiting recorded genuine alerts for parity, and one live alert end to end |
-| M2 FastAPI receiver | PASS -- 223 tests, live endpoint exercised |
-| M3 market data (Upstox live, FYERS research) | IN PROGRESS -- provider-neutral interfaces, candle builder, feed watchdog, mock provider; no adapter, no credentials |
+| M2 FastAPI receiver | PASS -- 396 tests, live endpoint exercised, full transport telemetry |
+| M3 market data (Upstox live, FYERS research) | PARTIAL -- mock/fixture paths complete; Upstox and FYERS adapters implemented from official docs but **never authenticated** |
 | M4 behaviour engine onward | NOT STARTED |
 
-The exchange calendar in `data/reference/nse_calendar.json` ships **empty on
-purpose**: no NSE holiday data was invented. Until you fill it in from official
-NSE circulars and set `verified_through`, the session module reports
-`UNVERIFIED_CALENDAR` and downstream gates fail closed.
+The exchange calendar in `data/reference/nse_calendar.json` claims **no
+official verification**. nseindia.com does not answer automated requests, so the
+only obtainable data was third-party, and every entry is marked `unofficial` or
+`disputed`. The rule the code enforces: **unofficial data may close the market,
+never open it.** So 2026-10-20 (Dussehra) correctly reports `HOLIDAY`, the
+disputed Muhurat date reports `UNSUPPORTED_SESSION`, and every ordinary trading
+day reports `UNVERIFIED_CALENDAR` until you read the circulars, mark the session
+windows `official` and set `official_verified_through`.
 
 Docs: [PRD](docs/PRD.md) | [ARD](docs/ARD.md) | [Test plan](docs/TEST_PLAN.md) |
 [ADRs](docs/ADR/) | [Engineering instructions](CLAUDE.md)

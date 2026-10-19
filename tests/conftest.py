@@ -53,9 +53,50 @@ _OMIT = _Omit()
 OMIT = _OMIT
 
 
+def _calendar(
+    *,
+    official_verified_through: str | None,
+    window_source: str,
+    holidays: dict[str, list[dict]] | None = None,
+    special_sessions: list[dict] | None = None,
+) -> dict:
+    return {
+        "schema_version": 2,
+        "timezone": "Asia/Kolkata",
+        "official_verified_through": official_verified_through,
+        "holiday_coverage": "test-fixture",
+        "segments": {
+            "CASH": {
+                "sessions": [
+                    {
+                        "effective_from": "2000-01-01",
+                        "pre_open_start": "09:00",
+                        "pre_open_end": "09:08",
+                        "regular_open": "09:15",
+                        "regular_close": "15:30",
+                        "source": window_source,
+                    }
+                ]
+            },
+            "FO": {
+                "sessions": [
+                    {
+                        "effective_from": "2000-01-01",
+                        "regular_open": "09:15",
+                        "regular_close": "15:30",
+                        "source": window_source,
+                    }
+                ]
+            },
+        },
+        "holidays": (holidays or []),
+        "special_sessions": (special_sessions or []),
+    }
+
+
 @pytest.fixture
 def calendar_file(tmp_path: Path) -> Path:
-    """A calendar verified through 2026, with one known holiday and no F&O entry.
+    """An OFFICIAL calendar verified through 2026, with one CASH-only holiday.
 
     The CASH/FO split is deliberate: the two segments do not share a holiday
     list in reality, and the code must not assume they do.
@@ -63,21 +104,18 @@ def calendar_file(tmp_path: Path) -> Path:
     path = tmp_path / "nse_calendar.json"
     path.write_text(
         json.dumps(
-            {
-                "timezone": "Asia/Kolkata",
-                "verified_through": "2026-12-31",
-                "segments": {
-                    "CASH": {
-                        "regular_open": "09:15",
-                        "regular_close": "15:30",
-                        "pre_open_start": "09:00",
-                        "pre_open_end": "09:08",
-                    },
-                    "FO": {"regular_open": "09:15", "regular_close": "15:30"},
-                },
-                "trading_holidays": {"CASH": ["2026-10-21"], "FO": []},
-                "special_sessions": [],
-            }
+            _calendar(
+                official_verified_through="2026-12-31",
+                window_source="official",
+                holidays=[
+                    {
+                        "date": "2026-10-21",
+                        "description": "Fixture holiday, cash only",
+                        "segments": ["CASH"],
+                        "source": "official",
+                    }
+                ],
+            )
         ),
         encoding="utf-8",
     )
@@ -86,18 +124,67 @@ def calendar_file(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def unverified_calendar_file(tmp_path: Path) -> Path:
+    """No official coverage at all: nothing may be reported OPEN."""
     path = tmp_path / "unverified_calendar.json"
     path.write_text(
+        json.dumps(_calendar(official_verified_through=None, window_source="unofficial")),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def unofficial_window_calendar_file(tmp_path: Path) -> Path:
+    """Dates are covered, but the session timings themselves are unofficial."""
+    path = tmp_path / "unofficial_window_calendar.json"
+    path.write_text(
         json.dumps(
-            {
-                "timezone": "Asia/Kolkata",
-                "verified_through": None,
-                "segments": {
-                    "CASH": {"regular_open": "09:15", "regular_close": "15:30"},
-                    "FO": {"regular_open": "09:15", "regular_close": "15:30"},
-                },
-                "trading_holidays": {"CASH": [], "FO": []},
-            }
+            _calendar(
+                official_verified_through="2026-12-31",
+                window_source="unofficial",
+                holidays=[
+                    {
+                        "date": "2026-10-20",
+                        "description": "Dussehra, third-party sourced",
+                        "segments": ["CASH", "FO"],
+                        "source": "unofficial",
+                    }
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def special_session_calendar_file(tmp_path: Path) -> Path:
+    """One official special session with timings, one disputed without."""
+    path = tmp_path / "special_calendar.json"
+    path.write_text(
+        json.dumps(
+            _calendar(
+                official_verified_through="2026-12-31",
+                window_source="official",
+                special_sessions=[
+                    {
+                        "date": "2026-11-10",
+                        "description": "Muhurat trading, official timings",
+                        "segments": ["CASH", "FO"],
+                        "regular_open": "18:15",
+                        "regular_close": "19:15",
+                        "source": "official",
+                    },
+                    {
+                        "date": "2026-10-21",
+                        "description": "Muhurat trading, date and timings disputed",
+                        "segments": ["CASH", "FO"],
+                        "regular_open": None,
+                        "regular_close": None,
+                        "source": "disputed",
+                    },
+                ],
+            )
         ),
         encoding="utf-8",
     )

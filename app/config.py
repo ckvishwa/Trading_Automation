@@ -42,9 +42,26 @@ class Settings(BaseSettings):
     )
     allowed_symbols: str = Field(default="NSE:NIFTY", alias="ALLOWED_SYMBOLS")
     allowed_timeframes: str = Field(default="1m,3m,5m,15m", alias="ALLOWED_TIMEFRAMES")
-    max_signal_age_seconds: int = Field(default=120, alias="MAX_SIGNAL_AGE_SECONDS")
+    # Three independent budgets that the earlier single 10-second tolerance was
+    # conflating. They answer different questions and must not share a value:
+    #
+    # * max_tradable_age_seconds -- how late a delivery may be and still be
+    #   allowed to open a paper position. This is a trading-risk decision.
+    # * max_recordable_age_seconds -- how late a delivery may be and still be
+    #   worth storing for analysis. Beyond this the event is rejected outright.
+    # * clock_skew_tolerance_seconds -- how far a timestamp may sit in the
+    #   future before it is treated as a clock or feed fault.
+    # * bar_close_tolerance_seconds -- how far before its own bar close an alert
+    #   may claim to have fired. This is candle alignment, not delivery.
+    max_tradable_age_seconds: int = Field(default=120, alias="MAX_TRADABLE_AGE_SECONDS")
+    max_recordable_age_seconds: int = Field(
+        default=900, alias="MAX_RECORDABLE_AGE_SECONDS"
+    )
     clock_skew_tolerance_seconds: int = Field(
         default=10, alias="CLOCK_SKEW_TOLERANCE_SECONDS"
+    )
+    bar_close_tolerance_seconds: int = Field(
+        default=5, alias="BAR_CLOSE_TOLERANCE_SECONDS"
     )
 
     # --- Storage ----------------------------------------------------------
@@ -62,6 +79,18 @@ class Settings(BaseSettings):
         # A relative path in .env means "relative to the project", not to
         # whichever directory the process happened to start in.
         return value if value.is_absolute() else PROJECT_ROOT / value
+
+    @field_validator("max_recordable_age_seconds")
+    @classmethod
+    def _recordable_covers_tradable(cls, value: int, info) -> int:
+        tradable = info.data.get("max_tradable_age_seconds")
+        if tradable is not None and value < tradable:
+            raise ValueError(
+                "MAX_RECORDABLE_AGE_SECONDS must be at least "
+                "MAX_TRADABLE_AGE_SECONDS; a signal cannot be fresh enough to "
+                "trade but too old to record"
+            )
+        return value
 
     @field_validator("webhook_token")
     @classmethod

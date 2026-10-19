@@ -3,14 +3,15 @@ from datetime import datetime, time, timezone
 import pytest
 
 from app.signals.htr_adapter import SignalPolicy, normalize_alert
-from app.signals.schemas import ReasonCode, SignalDirection
+from app.signals.schemas import Freshness, ReasonCode, SignalDirection
 from tests.conftest import INDICATOR, NOW, alert_payload
 
 POLICY = SignalPolicy(
     expected_indicator=INDICATOR,
     allowed_symbols=("NSE:NIFTY",),
     allowed_timeframes=("1m", "3m", "5m", "15m"),
-    max_signal_age_seconds=120,
+    max_tradable_age_seconds=120,
+    max_recordable_age_seconds=900,
     clock_skew_tolerance_seconds=10,
 )
 
@@ -103,15 +104,90 @@ def test_missing_required_field_is_schema_invalid():
     assert "ticker" in result.detail
 
 
-def test_stale_delivery_is_rejected():
-    late = datetime(2026, 10, 20, 4, 45, tzinfo=timezone.utc)  # 5 minutes after firing
-    result = normalize(alert_payload(), now=late)
-    assert result.reason is ReasonCode.STALE_SIGNAL
-
-
-def test_delivery_inside_the_age_budget_is_accepted():
+def test_delivery_inside_the_tradable_budget_is_fresh():
     just_in_time = datetime(2026, 10, 20, 4, 41, 59, tzinfo=timezone.utc)
-    assert normalize(alert_payload(), now=just_in_time).accepted
+    result = normalize(alert_payload(), now=just_in_time)
+    assert result.accepted
+    assert result.event.freshness is Freshness.FRESH
+    assert result.event.tradable
+    assert result.event.delivery_delay_ms == 119_000
+
+
+def test_a_late_delivery_is_recorded_but_not_tradable():
+    """The point of the three-state freshness rule.
+
+    A genuine signal that arrived too late to act on is still evidence. Dropping
+    it would bias any later measurement of how often the transport is slow.
+    """
+    late = datetime(2026, 10, 20, 4, 45, tzinfo=timezone.utc)  # 5 min after firing
+    result = normalize(alert_payload(), now=late)
+    assert result.accepted
+    assert result.event.freshness is Freshness.DELAYED
+    assert result.event.tradable is False
+    assert result.event.delivery_delay_ms == 300_000
+
+
+def test_delivery_beyond_the_recording_budget_is_rejected():
+    far_too_late = datetime(2026, 10, 20, 5, 0, 1, tzinfo=timezone.utc)  # > 900s
+    result = normalize(alert_payload(), now=far_too_late)
+    assert result.reason is ReasonCode.STALE_SIGNAL
+    assert "recording budget" in result.detail
+
+
+def test_the_tradable_boundary_is_exact():
+    at_budget = datetime(2026, 10, 20, 4, 42, 0, tzinfo=timezone.utc)  # exactly 120s
+    one_second_over = datetime(2026, 10, 20, 4, 42, 1, tzinfo=timezone.utc)
+    assert normalize(alert_payload(), now=at_budget).event.freshness is Freshness.FRESH
+    assert (
+        normalize(alert_payload(), now=one_second_over).event.freshness is Freshness.DELAYED
+    )
+
+
+def test_bar_close_tolerance_is_separate_from_the_delivery_budget():
+    """A slow network says nothing about whether a bar had closed.
+
+    The two were previously sharing one 10-second value. Here the delivery is
+    well inside its budget, and the alert is still refused because it fired
+    before its own bar closed.
+    """
+    strict = SignalPolicy(
+        expected_indicator=INDICATOR,
+        allowed_symbols=("NSE:NIFTY",),
+        allowed_timeframes=("1m", "3m", "5m", "15m"),
+        max_tradable_age_seconds=600,
+        max_recordable_age_seconds=600,
+        bar_close_tolerance_seconds=2,
+    )
+    # 5m bar opens 04:35 and closes 04:40; the alert claims 04:39:50.
+    result = normalize(
+        alert_payload(fired_at="2026-10-20T04:39:50Z"),
+        now=datetime(2026, 10, 20, 4, 40, tzinfo=timezone.utc),
+        policy=strict,
+    )
+    assert result.reason is ReasonCode.BAR_CLOSE_AFTER_FIRE_TIME
+    assert "before its own bar closed" in result.detail
+
+
+def test_firing_within_the_bar_close_tolerance_is_accepted():
+    tolerant = SignalPolicy(
+        expected_indicator=INDICATOR,
+        allowed_symbols=("NSE:NIFTY",),
+        allowed_timeframes=("1m", "3m", "5m", "15m"),
+        bar_close_tolerance_seconds=5,
+    )
+    result = normalize(
+        alert_payload(fired_at="2026-10-20T04:39:57Z"),
+        now=datetime(2026, 10, 20, 4, 40, tzinfo=timezone.utc),
+        policy=tolerant,
+    )
+    assert result.accepted
+    assert result.event.bar_close_lag_ms == -3_000
+
+
+def test_bar_close_lag_is_recorded_for_a_normal_delivery():
+    result = normalize(alert_payload(fired_at="2026-10-20T04:40:02Z"))
+    assert result.accepted
+    assert result.event.bar_close_lag_ms == 2_000
 
 
 def test_future_fired_at_is_rejected():

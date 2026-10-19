@@ -44,6 +44,19 @@ class SignalEventKind(StrEnum):
     REVERSAL = "REVERSAL"
 
 
+class Freshness(StrEnum):
+    """How late the delivery was, and therefore what may be done with it.
+
+    A delayed-but-genuine signal is evidence worth keeping even when it is too
+    late to act on, so the two judgements are separated: FRESH may open a paper
+    position, DELAYED is recorded for analysis only, EXPIRED is not recorded.
+    """
+
+    FRESH = "FRESH"
+    DELAYED = "DELAYED"
+    EXPIRED = "EXPIRED"
+
+
 class ReasonCode(StrEnum):
     """Every rejection in the system names one of these. No silent failures."""
 
@@ -60,6 +73,7 @@ class ReasonCode(StrEnum):
     INVALID_TIMESTAMP = "INVALID_TIMESTAMP"
     FUTURE_TIMESTAMP = "FUTURE_TIMESTAMP"
     STALE_SIGNAL = "STALE_SIGNAL"
+    STALE_FOR_TRADING = "STALE_FOR_TRADING"
     BAR_CLOSE_AFTER_FIRE_TIME = "BAR_CLOSE_AFTER_FIRE_TIME"
     BAR_NOT_ALIGNED_TO_TIMEFRAME = "BAR_NOT_ALIGNED_TO_TIMEFRAME"
     INVALID_SIGNAL_PRICE = "INVALID_SIGNAL_PRICE"
@@ -159,6 +173,15 @@ class NormalizedSignalEvent(BaseModel):
     signal_price: float = Field(gt=0)
     mode: str = "PAPER"
     idempotency_key: str
+
+    # --- transport telemetry, measured at ingestion -----------------------
+    # Kept on the event so that a stored signal carries its own provenance in
+    # time: every later question about latency is answerable from the journal
+    # rather than from logs that may have rotated away.
+    freshness: Freshness = Freshness.FRESH
+    tradable: bool = True
+    delivery_delay_ms: int = 0
+    bar_close_lag_ms: int = 0
 
     @staticmethod
     def build_idempotency_key(

@@ -36,7 +36,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
             "WEBHOOK_TOKEN is not set. Generate 32+ random characters and put it in .env"
         )
 
-    configure_logging()
+    # The webhook token is registered as a secret so that no log line can
+    # carry it, whichever library writes the line.
+    configure_logging(secrets=(settings.webhook_token,))
     store = EventStore(settings.database_path)
     calendar = SessionCalendar.load(settings.holiday_file)
     worker = SignalWorker(store)
@@ -94,6 +96,27 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
             "pending_decisions": len(store.pending_signals(limit=1000)),
             "decision_engine": "NOT_IMPLEMENTED",
             "exchange_calendar_verified_through": str(calendar.verified_through),
+            "exchange_calendar_holiday_coverage": calendar.holiday_coverage,
+            "schema_versions": list(store.schema_versions),
+        }
+
+    @app.get("/v1/telemetry/signals")
+    def signal_telemetry(limit: int = 50) -> dict:
+        """Read-only transport telemetry for recorded signals.
+
+        Exists so delivery latency and candle alignment can be inspected without
+        opening the database by hand. It reads; it cannot act.
+        """
+        return {
+            "mode": settings.trading_mode,
+            "live_orders": False,
+            "budgets": {
+                "max_tradable_age_seconds": settings.max_tradable_age_seconds,
+                "max_recordable_age_seconds": settings.max_recordable_age_seconds,
+                "clock_skew_tolerance_seconds": settings.clock_skew_tolerance_seconds,
+                "bar_close_tolerance_seconds": settings.bar_close_tolerance_seconds,
+            },
+            "signals": store.telemetry(limit=max(1, min(limit, 500))),
         }
 
     app.include_router(tradingview_router)

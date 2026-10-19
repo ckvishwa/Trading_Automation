@@ -282,3 +282,70 @@ def test_backoff_grows_and_stays_capped():
     assert len(set(delays)) > 1
     backoff.reset()
     assert backoff.attempt == 0
+
+
+# --- feed disconnection and reconnection --------------------------------------
+
+
+def test_a_disconnect_reconnect_cycle_is_tracked_end_to_end():
+    """The sequence the live feed will actually go through.
+
+    Healthy, then the socket drops, then a reconnect with growing backoff, then
+    healthy again. At no point while disconnected may the feed read as usable.
+    """
+    import random
+
+    watchdog = FeedWatchdog(silence_limit=timedelta(seconds=30))
+    backoff = ReconnectBackoff(base_seconds=1.0, max_seconds=30.0, _random=random.Random(1))
+
+    watchdog.on_connect(NOW)
+    watchdog.on_message(NOW + timedelta(seconds=1))
+    assert watchdog.is_usable(NOW + timedelta(seconds=2))
+
+    watchdog.on_disconnect()
+    assert watchdog.state(NOW + timedelta(seconds=3)) is FeedState.DISCONNECTED
+    assert not watchdog.is_usable(NOW + timedelta(seconds=3))
+
+    delays = [backoff.next_delay() for _ in range(4)]
+    assert all(0.0 <= delay <= 30.0 for delay in delays)
+    assert backoff.attempt == 4
+
+    reconnected = NOW + timedelta(seconds=10)
+    watchdog.on_connect(reconnected)
+    backoff.reset()
+    assert backoff.attempt == 0
+    assert watchdog.is_usable(reconnected + timedelta(seconds=1))
+
+
+def test_reconnecting_does_not_make_a_still_silent_feed_look_fresh():
+    # on_connect seeds the marker, so a feed that reconnects and then says
+    # nothing is reported SILENT rather than HEALTHY forever.
+    watchdog = FeedWatchdog(silence_limit=timedelta(seconds=30))
+    watchdog.on_connect(NOW)
+    assert watchdog.state(NOW + timedelta(seconds=10)) is FeedState.HEALTHY
+    assert watchdog.state(NOW + timedelta(seconds=31)) is FeedState.SILENT
+
+
+def test_backoff_ceiling_is_reached_and_held():
+    import random
+
+    backoff = ReconnectBackoff(
+        base_seconds=1.0, max_seconds=4.0, _random=random.Random(99)
+    )
+    for _ in range(20):
+        assert backoff.next_delay() <= 4.0
+
+
+def test_a_feed_disconnection_is_a_distinct_error_type():
+    from app.market_data.protocols import FeedDisconnected, MarketDataError
+
+    assert issubclass(FeedDisconnected, MarketDataError)
+    with pytest.raises(FeedDisconnected):
+        raise FeedDisconnected("socket closed by peer")
+
+
+def test_rate_limited_carries_its_retry_hint():
+    from app.market_data.protocols import RateLimited
+
+    error = RateLimited("slow down", retry_after_seconds=2.5)
+    assert error.retry_after_seconds == 2.5

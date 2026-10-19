@@ -2,7 +2,8 @@
 
 **Scope of this document:** it describes the code that exists, not the design
 intent. Components marked NOT IMPLEMENTED have no code behind them. Last
-updated 2026-10-19, after M1 analysis and the M3 architecture.
+updated 2026-10-19, after the provider documentation audit, the transport
+telemetry work and the Upstox/FYERS adapters.
 
 ## Responsibility split
 
@@ -10,8 +11,8 @@ updated 2026-10-19, after M1 analysis and the M3 architecture.
 |---|---|
 | TradingView / Pine | Signal **generation** only (Half Trend Regression reversals) |
 | Python engine | Contract validation, behavioural decisions, risk, paper simulation, evaluation |
-| Upstox | Live market **data** only -- adapter NOT IMPLEMENTED |
-| FYERS | Historical research **data** only -- adapter NOT IMPLEMENTED |
+| Upstox | Live market **data** only -- adapter implemented, **no credentials, never run against a live account** |
+| FYERS | Historical research **data** only -- adapter implemented, same caveat |
 
 The decision engine is deliberately separate from broker connectivity, and every
 feed is reached through an interface so that offline replay and deterministic
@@ -59,8 +60,13 @@ Provider-neutral market-data layer         [PARTIAL -- M3]
   app/market_data/candle_builder.py  ticks -> completed bars [IMPLEMENTED]
   app/market_data/health.py      watchdog + backoff          [IMPLEMENTED]
   app/market_data/mock_provider.py  offline fixtures         [IMPLEMENTED]
-  app/market_data/providers/upstox.py   live feed       [NOT IMPLEMENTED]
-  app/market_data/providers/fyers.py    research history [NOT IMPLEMENTED]
+  app/market_data/providers/upstox.py   instrument master, feed
+                                        subscription + normalization,
+                                        rate limiter        [IMPLEMENTED,
+                                                             UNAUTHENTICATED]
+  app/market_data/providers/fyers.py    symbol master, history and
+                                        expired-F&O parsing [IMPLEMENTED,
+                                                             UNAUTHENTICATED]
         |
         v
 ACCEPT / REJECT + reason codes             [NOT IMPLEMENTED -- M4]
@@ -108,6 +114,20 @@ wordings BULLISH/GREEN/LONG/UP -> BUY, BEARISH/RED/SHORT/DOWN -> SELL.
 
 Field values above are illustrative, not observed market prices.
 
+**Transport telemetry.** Every recorded signal carries `bar_open_time`,
+`bar_close_time`, `fired_at`, `received_at`, `processed_at`,
+`delivery_delay_ms`, `bar_close_lag_ms`, `processing_ms`, `freshness`,
+`tradable` and `session_state`, in the journal and in one structured log line.
+`GET /v1/telemetry/signals` reads them back with the active budgets. Processing
+time is measured on a monotonic clock. Stored on the event rather than left in
+logs, so latency questions stay answerable after the logs rotate.
+
+**Freshness is three-valued**, not two: `FRESH` (may open a paper position),
+`DELAYED` (recorded, `tradable=False`), `EXPIRED` (rejected `STALE_SIGNAL`).
+Downstream stages must check `tradable`, not merely that a signal exists. Four
+separate budgets replace the two values that were previously doing four jobs --
+see `docs/ADR/0006-calendar-trust-and-freshness-budgets.md`.
+
 **Timestamps.** Everything stored and returned is UTC. Market-session rules are
 evaluated in `Asia/Kolkata`. TradingView's `{{time}}` is the triggering bar's
 **open**, so `bar_close_time = bar_open_time + one bar`; this is derived in
@@ -130,7 +150,10 @@ SQLite, WAL, `synchronous=FULL`, one write connection behind a lock.
 | `raw_events` | Verbatim authenticated request bodies, correlation id, content type |
 | `signal_events` | Normalized events, `session_state`, `status`, full event JSON |
 | `ingest_rejections` | Every ingress rejection with its reason code and detail |
-| `schema_migrations` | Schema version (currently 1) |
+| `schema_migrations` | Schema version (currently 2) |
+
+Schema changes are additive `ALTER TABLE` statements applied when a column is
+missing, so an existing journal is upgraded in place rather than discarded.
 
 Nothing authentication-related is written: the token travels in the URL path and
 in headers, and neither is persisted or logged. `tests/contract` asserts this.
@@ -199,6 +222,16 @@ FYERS API facts are in `docs/ADR/0004-provider-neutral-market-data.md`.
   three-second cancellation window. Restrict ingress to TradingView's published
   IPv4 addresses where the proxy supports it.
 * Secrets come from the environment; none are in source or in git.
+* **Access logging is off, as a control rather than a preference.** The webhook
+  secret is the final path segment, because TradingView cannot send custom
+  headers, so an access log would write the token to disk on every delivery.
+  `ACCESS_LOG_ENABLED` in `app/__main__.py` is `False` and must stay so.
+* A handler-level `SecretRedactingFilter` scrubs the token from every log
+  record as defence in depth. Handler-level, not logger-level, because a filter
+  on a logger never sees records propagated from its children -- which is how
+  `httpx` logging a full request URL was found to leak it in testing. It also
+  scrubs non-string arguments, since the URL arrives as an object whose `str()`
+  contains the token.
 * `TRADING_MODE` is typed `Literal["PAPER"]`, so no configuration value can
   express a live mode, and `create_app` raises if one is injected
   programmatically. No order-placement code or route exists in the repository; a

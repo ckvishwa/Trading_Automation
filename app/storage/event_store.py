@@ -25,7 +25,7 @@ from typing import Iterator
 
 from app.signals.schemas import NormalizedSignalEvent, ReasonCode
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -75,6 +75,22 @@ CREATE TABLE IF NOT EXISTS ingest_rejections (
 """
 
 
+# Columns added after the first released schema. Applied with ALTER TABLE when
+# missing, so an existing journal is upgraded in place rather than discarded.
+# Append-only: never repurpose or remove an entry, or an older database would be
+# migrated to a different shape than a new one.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("signal_events", "freshness", "TEXT NOT NULL DEFAULT 'FRESH'"),
+    ("signal_events", "tradable", "INTEGER NOT NULL DEFAULT 1"),
+    ("signal_events", "delivery_delay_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("signal_events", "bar_close_lag_ms", "INTEGER NOT NULL DEFAULT 0"),
+    ("signal_events", "processed_at", "TEXT"),
+    ("signal_events", "processing_ms", "INTEGER"),
+    ("ingest_rejections", "freshness", "TEXT"),
+    ("ingest_rejections", "processing_ms", "INTEGER"),
+)
+
+
 class SignalStatus:
     PENDING_DECISION = "PENDING_DECISION"
     DECIDED = "DECIDED"
@@ -106,11 +122,30 @@ class EventStore:
         # DDL cannot be wrapped in this class's explicit transaction helper.
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            for table, column, definition in _ADDED_COLUMNS:
+                existing = {
+                    row["name"]
+                    for row in self._conn.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+                if column not in existing:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                    )
         with self._transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
                 (SCHEMA_VERSION, datetime.now().astimezone().isoformat()),
             )
+
+    @property
+    def schema_versions(self) -> tuple[int, ...]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        return tuple(int(row["version"]) for row in rows)
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -155,13 +190,24 @@ class EventStore:
         reason: ReasonCode,
         detail: str | None,
         raw_event_id: int | None,
+        freshness: str | None = None,
+        processing_ms: int | None = None,
     ) -> None:
         with self._transaction() as conn:
             conn.execute(
                 "INSERT INTO ingest_rejections"
-                " (correlation_id, received_at, reason, detail, raw_event_id)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (correlation_id, received_at.isoformat(), reason.value, detail, raw_event_id),
+                " (correlation_id, received_at, reason, detail, raw_event_id,"
+                "  freshness, processing_ms)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    correlation_id,
+                    received_at.isoformat(),
+                    reason.value,
+                    detail,
+                    raw_event_id,
+                    freshness,
+                    processing_ms,
+                ),
             )
 
     def store_signal(
@@ -171,6 +217,8 @@ class EventStore:
         correlation_id: str,
         raw_event_id: int,
         session_state: str,
+        processed_at: datetime | None = None,
+        processing_ms: int | None = None,
     ) -> StoreOutcome:
         """Persist a normalized event exactly once.
 
@@ -183,8 +231,10 @@ class EventStore:
                 "INSERT INTO signal_events ("
                 " idempotency_key, signal_id, correlation_id, raw_event_id, symbol, timeframe,"
                 " signal, bar_open_time, bar_close_time, fired_at, received_at, signal_price,"
-                " mode, session_state, status, event_json"
-                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " mode, session_state, status, event_json,"
+                " freshness, tradable, delivery_delay_ms, bar_close_lag_ms,"
+                " processed_at, processing_ms"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(idempotency_key) DO NOTHING",
                 (
                     event.idempotency_key,
@@ -203,6 +253,12 @@ class EventStore:
                     session_state,
                     SignalStatus.PENDING_DECISION,
                     event.model_dump_json(),
+                    event.freshness.value,
+                    int(event.tradable),
+                    event.delivery_delay_ms,
+                    event.bar_close_lag_ms,
+                    processed_at.isoformat() if processed_at else None,
+                    processing_ms,
                 ),
             )
             if cursor.rowcount == 1:
@@ -234,14 +290,16 @@ class EventStore:
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT signal_id, event_json, session_state FROM signal_events"
-                " WHERE status = ? ORDER BY received_at LIMIT ?",
+                "SELECT signal_id, event_json, session_state, freshness, tradable"
+                " FROM signal_events WHERE status = ? ORDER BY received_at LIMIT ?",
                 (SignalStatus.PENDING_DECISION, limit),
             ).fetchall()
         return [
             {
                 "signal_id": row["signal_id"],
                 "session_state": row["session_state"],
+                "freshness": row["freshness"],
+                "tradable": bool(row["tradable"]),
                 "event": json.loads(row["event_json"]),
             }
             for row in rows
@@ -262,6 +320,25 @@ class EventStore:
     def rejections(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT reason, detail, received_at FROM ingest_rejections ORDER BY id"
+                "SELECT reason, detail, received_at, freshness, processing_ms"
+                " FROM ingest_rejections ORDER BY id"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def telemetry(self, limit: int = 200) -> list[dict]:
+        """Per-signal transport telemetry, newest first.
+
+        One row per recorded signal with every timestamp the pipeline observed,
+        so delivery latency and candle alignment can be measured after the fact
+        from the journal alone rather than from logs that may have rotated away.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT signal_id, symbol, timeframe, signal, bar_open_time,"
+                " bar_close_time, fired_at, received_at, processed_at,"
+                " delivery_delay_ms, bar_close_lag_ms, processing_ms, freshness,"
+                " tradable, session_state, status"
+                " FROM signal_events ORDER BY received_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [{**dict(row), "tradable": bool(row["tradable"])} for row in rows]

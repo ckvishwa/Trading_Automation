@@ -21,6 +21,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import time as _time
 import uuid
 from datetime import datetime, timezone
 
@@ -63,6 +64,12 @@ async def _handle(
     # and in historical replay, not tied to wall-clock time.
     clock = getattr(state, "clock", None)
     now = clock() if clock is not None else datetime.now(tz=timezone.utc)
+    # Monotonic, so a wall-clock adjustment mid-request cannot produce a
+    # negative processing time.
+    started = _time.perf_counter()
+
+    def elapsed_ms() -> int:
+        return round((_time.perf_counter() - started) * 1000)
 
     authorized = _token_matches(supplied_token, state.webhook_token) or _token_matches(
         header_token, state.webhook_token
@@ -72,7 +79,11 @@ async def _handle(
         # writes to disk on every request is a denial-of-service surface.
         logger.warning(
             "unauthorized webhook request",
-            extra={"correlation_id": correlation_id, "reason": ReasonCode.UNAUTHORIZED.value},
+            extra={
+                "correlation_id": correlation_id,
+                "reason": ReasonCode.UNAUTHORIZED.value,
+                "processing_ms": elapsed_ms(),
+            },
         )
         return _json_response(401, {"status": REJECTED, "reason": ReasonCode.UNAUTHORIZED.value})
 
@@ -112,6 +123,7 @@ async def _handle(
             reason=ReasonCode.MALFORMED_JSON,
             detail=str(exc),
             raw_event_id=raw_event_id,
+            processing_ms=elapsed_ms(),
         )
         logger.warning(
             "malformed webhook JSON",
@@ -130,6 +142,7 @@ async def _handle(
             reason=result.reason,
             detail=result.detail,
             raw_event_id=raw_event_id,
+            processing_ms=elapsed_ms(),
         )
         logger.info(
             "signal rejected at ingress",
@@ -137,6 +150,8 @@ async def _handle(
                 "correlation_id": correlation_id,
                 "reason": result.reason.value,
                 "detail": result.detail,
+                "received_at": now.isoformat(),
+                "processing_ms": elapsed_ms(),
             },
         )
         return _json_response(
@@ -146,12 +161,15 @@ async def _handle(
 
     event = result.event
     session_status = state.session_calendar.classify(event.bar_close_time, Segment.FO)
+    processed_at = (clock() if clock is not None else datetime.now(tz=timezone.utc))
     outcome = await run_in_threadpool(
         store.store_signal,
         event,
         correlation_id=correlation_id,
         raw_event_id=raw_event_id,
         session_state=session_status.state.value,
+        processed_at=processed_at,
+        processing_ms=elapsed_ms(),
     )
 
     if not outcome.stored:
@@ -162,6 +180,7 @@ async def _handle(
                 "reason": ReasonCode.DUPLICATE_SIGNAL.value,
                 "signal_id": outcome.signal_id,
                 "idempotency_key": event.idempotency_key,
+                "processing_ms": elapsed_ms(),
             },
         )
         return _json_response(
@@ -173,6 +192,9 @@ async def _handle(
             },
         )
 
+    # End-to-end transport telemetry, one structured line per recorded signal.
+    # Every timestamp the pipeline saw is here, so delivery latency and candle
+    # alignment can be reconstructed without re-deriving anything.
     logger.info(
         "signal recorded",
         extra={
@@ -181,7 +203,16 @@ async def _handle(
             "symbol": event.symbol,
             "timeframe": event.timeframe,
             "signal": event.signal.value,
+            "bar_open_time": event.bar_open_time.isoformat(),
             "bar_close_time": event.bar_close_time.isoformat(),
+            "fired_at": event.fired_at.isoformat(),
+            "received_at": event.received_at.isoformat(),
+            "processed_at": processed_at.isoformat(),
+            "delivery_delay_ms": event.delivery_delay_ms,
+            "bar_close_lag_ms": event.bar_close_lag_ms,
+            "processing_ms": elapsed_ms(),
+            "freshness": event.freshness.value,
+            "tradable": event.tradable,
             "session_state": session_status.state.value,
             "mode": event.mode,
         },
@@ -195,10 +226,19 @@ async def _handle(
             "signal": event.signal.value,
             "symbol": event.symbol,
             "timeframe": event.timeframe,
+            "bar_open_time": event.bar_open_time.isoformat(),
             "bar_close_time": event.bar_close_time.isoformat(),
+            "fired_at": event.fired_at.isoformat(),
+            "received_at": event.received_at.isoformat(),
+            "delivery_delay_ms": event.delivery_delay_ms,
+            "bar_close_lag_ms": event.bar_close_lag_ms,
+            "processing_ms": elapsed_ms(),
+            "freshness": event.freshness.value,
+            "tradable": event.tradable,
             "session_state": session_status.state.value,
             "mode": event.mode,
-            "note": "Recorded for behavioral evaluation. No order, fill, or trade decision.",
+            "note": "Recorded for behavioral evaluation. No order, fill, or trade decision."
+            + ("" if event.tradable else " Delivered too late to trade; analysis only."),
         },
     )
 

@@ -93,12 +93,77 @@ def test_duplicate_delivery_is_rejected_and_stores_nothing_new(client):
     assert client.get("/health").json()["signals_recorded"] == 1
 
 
-def test_stale_event_is_rejected(client, settings):
-    app_client = client
-    # Alert fired 04:40Z, received 04:45Z: beyond the 120s delivery budget.
-    app_client.app.state.clock = lambda: NOW.replace(minute=45, second=0)
-    body = post(app_client, alert_payload()).json()
+def test_a_late_event_is_recorded_but_flagged_untradable(client):
+    # Fired 04:40Z, received 04:45Z: past the 120s tradable budget, inside the
+    # 900s recording budget. Evidence is kept; trading is not permitted on it.
+    client.app.state.clock = lambda: NOW.replace(minute=45, second=0)
+    body = post(client, alert_payload()).json()
+    assert body["status"] == "SIGNAL_RECORDED"
+    assert body["freshness"] == "DELAYED"
+    assert body["tradable"] is False
+    assert body["delivery_delay_ms"] == 300_000
+    assert "analysis only" in body["note"]
+
+
+def test_an_event_beyond_the_recording_budget_is_rejected(client):
+    client.app.state.clock = lambda: NOW.replace(hour=6, minute=0, second=0)
+    body = post(client, alert_payload()).json()
     assert body["reason"] == "STALE_SIGNAL"
+    assert client.app.state.event_store.count_signals() == 0
+
+
+def test_recorded_signal_carries_full_transport_telemetry(client):
+    body = post(client, alert_payload()).json()
+    assert body["bar_open_time"] == "2026-10-20T04:35:00+00:00"
+    assert body["bar_close_time"] == "2026-10-20T04:40:00+00:00"
+    assert body["fired_at"] == "2026-10-20T04:40:00+00:00"
+    assert body["received_at"] == "2026-10-20T04:40:30+00:00"
+    assert body["delivery_delay_ms"] == 30_000
+    assert body["bar_close_lag_ms"] == 0
+    assert body["processing_ms"] >= 0
+    assert body["freshness"] == "FRESH"
+    assert body["tradable"] is True
+
+    row = client.app.state.event_store.telemetry()[0]
+    assert row["signal_id"] == body["signal_id"]
+    assert row["processed_at"] is not None
+    assert row["delivery_delay_ms"] == 30_000
+    assert row["freshness"] == "FRESH"
+    assert row["tradable"] is True
+
+
+def test_telemetry_endpoint_reports_budgets_and_rows(client):
+    post(client, alert_payload())
+    body = client.get("/v1/telemetry/signals").json()
+    assert body["mode"] == "PAPER"
+    assert body["live_orders"] is False
+    assert body["budgets"] == {
+        "max_tradable_age_seconds": 120,
+        "max_recordable_age_seconds": 900,
+        "clock_skew_tolerance_seconds": 10,
+        "bar_close_tolerance_seconds": 5,
+    }
+    assert len(body["signals"]) == 1
+
+
+def test_an_alert_that_fired_before_its_bar_closed_is_rejected_over_http(client):
+    # On the 5m grid, but the bar opening 04:40 does not close until 04:45,
+    # so an alert claiming to have fired at 04:40 describes an unconfirmed bar.
+    body = post(
+        client,
+        alert_payload(bar_open_time="2026-10-20T04:40:00Z"),
+    ).json()
+    assert body["reason"] == "BAR_CLOSE_AFTER_FIRE_TIME"
+
+
+def test_an_off_grid_bar_open_is_rejected_over_http(client):
+    body = post(
+        client,
+        alert_payload(
+            bar_open_time="2026-10-20T04:37:00Z", fired_at="2026-10-20T04:42:00Z"
+        ),
+    ).json()
+    assert body["reason"] == "BAR_NOT_ALIGNED_TO_TIMEFRAME"
 
 
 def test_future_timestamp_is_rejected(client):
@@ -190,7 +255,12 @@ def test_health_reports_paper_mode_and_no_live_orders(client):
 def test_application_exposes_no_order_routes(client):
     paths = set(client.get("/openapi.json").json()["paths"])
     assert not any("order" in path or "trade" in path for path in paths)
-    assert paths == {"/health", "/v1/webhooks/tradingview", "/v1/webhooks/tradingview/{token}"}
+    assert paths == {
+        "/health",
+        "/v1/telemetry/signals",
+        "/v1/webhooks/tradingview",
+        "/v1/webhooks/tradingview/{token}",
+    }
 
 
 def test_restart_replays_pending_work_and_still_rejects_duplicates(settings):

@@ -56,6 +56,9 @@ class Instrument:
     strike: float | None = None
     option_type: OptionType | None = None
     underlying_symbol: str | None = None
+    # Provider-specific fields that the engine does not model but must not throw
+    # away: a diagnosis of a wrong strike or lot size needs the original record.
+    extra: dict = field(default_factory=dict)
 
     @property
     def is_option(self) -> bool:

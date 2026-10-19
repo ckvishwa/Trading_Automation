@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from app.signals.schemas import (
+    Freshness,
     NormalizedSignalEvent,
     RawTradingViewAlert,
     ReasonCode,
@@ -41,8 +42,16 @@ class SignalPolicy:
     expected_indicator: str
     allowed_symbols: tuple[str, ...]
     allowed_timeframes: tuple[str, ...]
-    max_signal_age_seconds: int = 120
+    # Delivery budgets: how late a delivery may be to trade on, and how late it
+    # may be to be worth recording at all.
+    max_tradable_age_seconds: int = 120
+    max_recordable_age_seconds: int = 900
+    # Clock-fault tolerance for timestamps in the future.
     clock_skew_tolerance_seconds: int = 10
+    # Candle-alignment tolerance: how far before its bar close an alert may
+    # claim to have fired. Deliberately separate from the delivery budgets --
+    # a slow network says nothing about whether a bar had closed.
+    bar_close_tolerance_seconds: int = 5
     required_mode: str = "PAPER"
     # IST session-open time used as the intraday bar grid anchor. None disables
     # the alignment check rather than guessing an anchor.
@@ -70,6 +79,7 @@ def normalize_alert(
     """Validate and normalize one inbound alert body."""
     now = to_utc(now)
     skew = timedelta(seconds=policy.clock_skew_tolerance_seconds)
+    bar_close_slack = timedelta(seconds=policy.bar_close_tolerance_seconds)
 
     try:
         alert = RawTradingViewAlert.model_validate(payload)
@@ -139,17 +149,32 @@ def normalize_alert(
             ReasonCode.FUTURE_TIMESTAMP,
             f"bar_open_time={alert.bar_open_time.isoformat()} > now",
         )
-    if now - alert.fired_at > timedelta(seconds=policy.max_signal_age_seconds):
-        age = (now - alert.fired_at).total_seconds()
-        return _reject(ReasonCode.STALE_SIGNAL, f"delivery age {age:.0f}s")
+    # Delivery lateness. Three outcomes, not two: a genuine signal that arrived
+    # too late to trade is still evidence, and discarding it would bias any
+    # later measurement of how often the transport is slow.
+    delivery_delay = now - alert.fired_at
+    if delivery_delay > timedelta(seconds=policy.max_recordable_age_seconds):
+        return _reject(
+            ReasonCode.STALE_SIGNAL,
+            f"delivery age {delivery_delay.total_seconds():.0f}s exceeds the "
+            f"{policy.max_recordable_age_seconds}s recording budget",
+        )
+    if delivery_delay > timedelta(seconds=policy.max_tradable_age_seconds):
+        freshness = Freshness.DELAYED
+    else:
+        freshness = Freshness.FRESH
 
     # A `Once Per Bar Close` alert cannot legitimately fire before its bar has
     # closed. If it did, the payload is describing an unconfirmed (repainting)
     # bar and must not be treated as a confirmed signal.
-    if bar_close_time > alert.fired_at + skew:
+    bar_close_lag = alert.fired_at - bar_close_time
+    if bar_close_lag < -bar_close_slack:
         return _reject(
             ReasonCode.BAR_CLOSE_AFTER_FIRE_TIME,
-            f"bar_close={bar_close_time.isoformat()} fired_at={alert.fired_at.isoformat()}",
+            f"fired {abs(bar_close_lag.total_seconds()):.0f}s before its own bar "
+            f"closed (bar_close={bar_close_time.isoformat()}, "
+            f"fired_at={alert.fired_at.isoformat()}); an unconfirmed bar is not "
+            "a confirmed signal",
         )
 
     event = NormalizedSignalEvent(
@@ -163,6 +188,10 @@ def normalize_alert(
         received_at=now,
         signal_price=price,
         mode=policy.required_mode,
+        freshness=freshness,
+        tradable=freshness is Freshness.FRESH,
+        delivery_delay_ms=round(delivery_delay.total_seconds() * 1000),
+        bar_close_lag_ms=round(bar_close_lag.total_seconds() * 1000),
         idempotency_key=NormalizedSignalEvent.build_idempotency_key(
             symbol=alert.symbol,
             timeframe=timeframe,
@@ -195,8 +224,10 @@ def policy_from_settings(settings, session_open_ist: time | None = None) -> Sign
         expected_indicator=settings.expected_indicator,
         allowed_symbols=settings.symbol_allowlist,
         allowed_timeframes=settings.timeframe_allowlist,
-        max_signal_age_seconds=settings.max_signal_age_seconds,
+        max_tradable_age_seconds=settings.max_tradable_age_seconds,
+        max_recordable_age_seconds=settings.max_recordable_age_seconds,
         clock_skew_tolerance_seconds=settings.clock_skew_tolerance_seconds,
+        bar_close_tolerance_seconds=settings.bar_close_tolerance_seconds,
         required_mode=settings.trading_mode,
         session_open_ist=session_open_ist,
     )

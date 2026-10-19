@@ -169,6 +169,12 @@ class SignalReplay:
                 correlation_id=correlation_id,
                 raw_event_id=raw_event_id,
                 session_state=session_state.state.value,
+                # Replay has a processing timestamp but no meaningful processing
+                # duration: it would measure how fast the replay ran, not how
+                # long the live transport took. Left null rather than filled
+                # with a number that means something else.
+                processed_at=now,
+                processing_ms=None,
             )
             if outcome.stored:
                 summary.recorded += 1

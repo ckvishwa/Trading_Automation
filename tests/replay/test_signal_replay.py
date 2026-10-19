@@ -24,7 +24,8 @@ POLICY = SignalPolicy(
     expected_indicator=INDICATOR,
     allowed_symbols=("NSE:NIFTY",),
     allowed_timeframes=("1m", "3m", "5m", "15m"),
-    max_signal_age_seconds=120,
+    max_tradable_age_seconds=120,
+    max_recordable_age_seconds=900,
     clock_skew_tolerance_seconds=10,
     session_open_ist=time(9, 15),
 )
@@ -93,7 +94,9 @@ def test_the_replay_clock_comes_from_the_event_not_from_wall_time(replay):
     assert summary.recorded == 2
 
 
-def test_delivery_delay_beyond_the_freshness_budget_is_rejected(tmp_path, calendar_file):
+def test_a_modelled_delay_past_the_tradable_budget_is_recorded_untradable(
+    tmp_path, calendar_file
+):
     store = EventStore(tmp_path / "slow.db")
     engine = SignalReplay(
         store,
@@ -102,8 +105,28 @@ def test_delivery_delay_beyond_the_freshness_budget_is_rejected(tmp_path, calend
         delivery_delay=timedelta(minutes=10),
     )
     summary = engine.run([bar(0)])
+    assert summary.rejected == 0
+    assert summary.recorded == 1
+    pending = store.pending_signals()
+    assert pending[0]["freshness"] == "DELAYED"
+    assert pending[0]["tradable"] is False
+    store.close()
+
+
+def test_a_modelled_delay_beyond_the_recording_budget_is_rejected(
+    tmp_path, calendar_file
+):
+    store = EventStore(tmp_path / "far-too-slow.db")
+    engine = SignalReplay(
+        store,
+        POLICY,
+        SessionCalendar.load(calendar_file),
+        delivery_delay=timedelta(minutes=20),
+    )
+    summary = engine.run([bar(0)])
     assert summary.rejected == 1
     assert summary.reasons[ReasonCode.STALE_SIGNAL.value] == 1
+    assert store.count_signals() == 0
     store.close()
 
 

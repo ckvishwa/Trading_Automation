@@ -54,7 +54,22 @@ no order or trade path.
   (`app/signals/timeframes.py`), never assume it.
 * Every rejection names a `ReasonCode`. Never swallow an exception silently.
 * Fail closed when market data or the exchange calendar is stale, missing or
-  unverified.
+  unverified. For the calendar specifically: **unofficial data may close the
+  market, never open it.** `OPEN`/`PRE_OPEN` need an official session window
+  and an officially covered date.
+* Freshness is three-valued. A `DELAYED` signal is recorded for analysis and
+  must **not** open a paper position: check `tradable`, not just existence.
+* Never reuse one tolerance for two questions. Delivery lateness, clock skew and
+  candle alignment each have their own setting (ADR 0006).
+* Provider values carry `Provenance`, including `is_mock`. Never let mock data
+  reach a decision as though it were live.
+* Provider adapters raise rather than invent: `DataUnavailable`,
+  `CredentialsMissing`, `RateLimited`, `FeedDisconnected`. A malformed record is
+  reported with the offending field, never defaulted -- a defaulted lot size is
+  a wrong trade waiting to happen.
+* **Access logging stays off** (`ACCESS_LOG_ENABLED` in `app/__main__.py`): the
+  webhook token is in the URL path. Secret redaction belongs on log *handlers*,
+  not loggers.
 * Risk rules live in one place (`app/strategy/risk_manager.py` once it exists).
 * Webhook handling is idempotent; the idempotency key excludes delivery
   metadata so retries collapse.
@@ -68,7 +83,7 @@ no order or trade path.
 app/api/          FastAPI gateway + TradingView ingress
 app/signals/      contracts, HTR adapter, timeframes, worker
 app/market_data/  session calendar, candle builder, feed health, protocols,
-                  mock provider, providers/{upstox,fyers} (M3)
+                  contracts, mock provider, providers/{upstox,fyers} (M3)
 app/behavior/     behavioural features and decision engine (M4)
 app/strategy/     option selector, risk manager (M5)
 app/execution/    paper broker, position manager (M6)
@@ -88,7 +103,7 @@ authorization.
 ## Commands
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest        # 223 tests, offline
+.\.venv\Scripts\python.exe -m pytest        # 396 tests, offline
 .\.venv\Scripts\python.exe -m app           # local engine on 127.0.0.1:8788
 npm test                                    # pre-existing Node collector tests
 ```

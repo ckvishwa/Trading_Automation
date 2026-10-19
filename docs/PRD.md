@@ -69,9 +69,9 @@ exceed them: gaps, slippage and the full long-option premium are all at risk.
 | # | Milestone | Exit gate | Status |
 |---|---|---|---|
 | M0 | Repository audit and architecture | Existing state verified, documented | **PASS** -- `docs/AUDIT_M0.md` |
-| M1 | HTR alert integration | Exact signal contract verified | **PARTIAL** -- source obtained and analysed; conditions, defaults, state machine and display-only inputs verified; historical repaint ruled out offline. Still missing: parity against recorded genuine alerts, and one live alert received end to end |
+| M1 | HTR alert integration | Exact signal contract verified | **PARTIAL** -- source obtained and analysed; conditions, defaults, state machine and display-only inputs verified; historical repaint ruled out offline; full transport telemetry and separated freshness/alignment budgets in place. Still missing: parity against recorded genuine alerts, and one live alert received end to end |
 | M2 | FastAPI receiver | BUY/SELL, validation, dedup tests pass | **PASS** -- 223 tests, live endpoint exercised |
-| M3 | Market data (Upstox live, FYERS research) | Feed, candles, instruments verified | **IN PROGRESS** -- provider-neutral interfaces, candle builder, feed watchdog and mock provider implemented and tested; no provider adapter implemented, no credentials |
+| M3 | Market data (Upstox live, FYERS research) | Feed, candles, instruments verified | **PARTIAL** -- mock and fixture paths complete and tested end to end; Upstox instrument master, feed subscription, message normalization and rate limiting implemented; FYERS symbol master, history and expired-F&O parsing implemented. **Nothing authenticated**: no credentials, no socket ever opened, and the Protobuf wire decode still needs generated stubs |
 | M4 | Behaviour engine | Replay and chronological validation pass | NOT STARTED |
 | M5 | Options and risk engine | Contract and risk tests pass | NOT STARTED |
 | M6 | Paper trading | Deterministic fills and zero-order guarantee | NOT STARTED |

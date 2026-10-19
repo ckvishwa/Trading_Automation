@@ -1,0 +1,12 @@
+{"type": "market_info", "currentTs": "1792381500000", "marketInfo": {"segmentStatus": {"NSE_EQ": "NORMAL_OPEN"}}}
+{"type": "live_feed", "currentTs": "1792381500000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25000.0, "ltt": "1792381500000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381560000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25012.5, "ltt": "1792381560000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381620000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25004.0, "ltt": "1792381620000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381620000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25004.0, "ltt": "1792381620000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381740000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25020.0, "ltt": "1792381740000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381680000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25008.0, "ltt": "1792381680000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381800000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25018.0, "ltt": "1792381800000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381860000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25040.0, "ltt": "1792381860000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792381920000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25031.0, "ltt": "1792381920000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792382040000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25035.5, "ltt": "1792382040000", "ltq": "50", "cp": 24980.0}}}}
+{"type": "live_feed", "currentTs": "1792382100000", "feeds": {"NSE_INDEX|Nifty 50": {"ltpc": {"ltp": 25050.0, "ltt": "1792382100000", "ltq": "50", "cp": 24980.0}}}}

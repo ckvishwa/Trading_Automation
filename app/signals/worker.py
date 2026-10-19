@@ -57,6 +57,8 @@ class SignalWorker:
                             "signal": event["signal"],
                             "bar_close_time": event["bar_close_time"],
                             "session_state": item["session_state"],
+                            "freshness": item["freshness"],
+                            "tradable": item["tradable"],
                             "decision_engine": "NOT_IMPLEMENTED",
                         },
                     )

@@ -1,26 +1,86 @@
 {
-  "_README": "Exchange schedule data. NOT verified by the engine author. Holiday lists and session timings must be filled in from official NSE circulars and `verified_through` set to the last date they cover. While `verified_through` is null or in the past, the session module reports UNVERIFIED_CALENDAR and every downstream gate fails closed.",
+  "schema_version": 2,
+  "_WARNING": "THIS FILE CONTAINS NO OFFICIALLY VERIFIED DATA. `official_verified_through` is null, so the engine will never report a session as OPEN from it. Entries marked source=unofficial come from third-party broker holiday pages and may only CLOSE the market, never open it. To make the engine usable for live trading decisions, fill this in from the NSE/BSE circulars listed under `sources`, set each session window's source to \"official\", and set `official_verified_through` to the last date the circulars cover.",
+  "_rule": "An unofficial or disputed entry can only make the engine more restrictive. OPEN and PRE_OPEN require an official session window AND a date covered by official_verified_through. A special session with unknown timings yields UNSUPPORTED_SESSION rather than a guess.",
   "timezone": "Asia/Kolkata",
-  "verified_through": null,
-  "source_urls": [
-    "https://www.nseindia.com/resources/exchange-communication-holidays",
-    "https://www.nseindia.com/products-services/equity-derivatives-trading-schedule-holidays"
-  ],
+  "official_verified_through": null,
+  "holiday_coverage": "partial",
+  "sources": {
+    "official": [
+      "https://www.nseindia.com/resources/exchange-communication-holidays",
+      "https://www.nseindia.com/products-services/equity-derivatives-trading-schedule-holidays",
+      "https://www.nseindia.com/market-data/market-timings-holidays",
+      "https://www.bseindia.com/static/markets/marketinfo/listholi.aspx"
+    ],
+    "retrieval_note": "nseindia.com did not respond to automated retrieval on 2026-10-19 (two 60s timeouts). Every value below was therefore taken from secondary sources or from widely published session timings, and is marked accordingly. None of it is an authenticated reading of a circular."
+  },
   "segments": {
     "CASH": {
-      "regular_open": "09:15",
-      "regular_close": "15:30",
-      "pre_open_start": "09:00",
-      "pre_open_end": "09:08"
+      "description": "NSE Capital Market (equities)",
+      "sessions": [
+        {
+          "effective_from": "2000-01-01",
+          "pre_open_start": "09:00",
+          "pre_open_end": "09:08",
+          "regular_open": "09:15",
+          "regular_close": "15:30",
+          "source": "unofficial",
+          "note": "Widely published NSE equity timings. Not read from a circular in this session."
+        }
+      ]
     },
     "FO": {
-      "regular_open": "09:15",
-      "regular_close": "15:30"
+      "description": "NSE Equity Derivatives",
+      "sessions": [
+        {
+          "effective_from": "2000-01-01",
+          "regular_open": "09:15",
+          "regular_close": "15:30",
+          "source": "unofficial",
+          "note": "Modelled separately from CASH on purpose: the two segments are not guaranteed to share timings or holidays, and NSE has consulted on extended derivatives hours."
+        }
+      ]
     }
   },
-  "trading_holidays": {
-    "CASH": [],
-    "FO": []
-  },
-  "special_sessions": []
+  "holidays": [
+    {
+      "date": "2026-10-20",
+      "description": "Dussehra",
+      "segments": ["CASH", "FO"],
+      "source": "unofficial",
+      "evidence": "Zerodha, Groww, Angel One, Bajaj Finserv, Tata Mutual Fund, Choice and Anand Rathi 2026 holiday pages all list Tuesday 2026-10-20 as closed for equity and equity derivatives. No NSE circular was readable."
+    },
+    {
+      "date": "2026-11-10",
+      "description": "Diwali Balipratipada",
+      "segments": ["CASH", "FO"],
+      "source": "unofficial",
+      "evidence": "Multiple third-party 2026 holiday listings."
+    },
+    {
+      "date": "2026-11-24",
+      "description": "Prakash Gurpurb Sri Guru Nanak Dev",
+      "segments": ["CASH", "FO"],
+      "source": "unofficial",
+      "evidence": "Multiple third-party 2026 holiday listings."
+    },
+    {
+      "date": "2026-12-25",
+      "description": "Christmas",
+      "segments": ["CASH", "FO"],
+      "source": "unofficial",
+      "evidence": "Multiple third-party 2026 holiday listings."
+    }
+  ],
+  "special_sessions": [
+    {
+      "date": "2026-10-21",
+      "description": "Muhurat trading (date DISPUTED between sources; one lists 2026-10-21, another ties it to Diwali Laxmi Pujan on 2026-11-08)",
+      "segments": ["CASH", "FO"],
+      "regular_open": null,
+      "regular_close": null,
+      "source": "disputed",
+      "evidence": "Third-party sources disagree. Timings deliberately left null so the engine reports UNSUPPORTED_SESSION instead of assuming regular hours."
+    }
+  ]
 }
