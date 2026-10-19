@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from app.api.tradingview_webhook import router as tradingview_router
 from app.config import Settings, get_settings
 from app.logging_setup import configure_logging
-from app.market_data.session import SessionCalendar
+from app.market_data.session import Segment, SessionCalendar
 from app.signals.htr_adapter import policy_from_settings
 from app.signals.worker import SignalWorker
 from app.storage.event_store import EventStore
@@ -76,7 +76,9 @@ def create_app(settings: Settings | None = None, *, start_worker: bool = True) -
     app.state.settings = settings
     app.state.event_store = store
     app.state.session_calendar = calendar
-    app.state.signal_policy = policy_from_settings(settings)
+    app.state.signal_policy = policy_from_settings(
+        settings, session_open_ist=calendar.segment_open(Segment.FO)
+    )
     app.state.webhook_token = settings.webhook_token
     app.state.max_body_bytes = settings.max_body_bytes
     app.state.signal_worker = worker

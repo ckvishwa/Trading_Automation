@@ -13,6 +13,16 @@ no order or trade path.
 * Half Trend Regression (HTR) on TradingView is the **only** external technical
   indicator. Python does not generate directional signals; it only ACCEPTs or
   REJECTs HTR's.
+* The genuine Pine v5 source lives at `pine/half_trend_regression_algoalpha.pine`
+  (© AlgoAlpha, MPL 2.0). **Do not edit it**, and keep its licence header. It is
+  the project's signal definition; `pine/HTR_ANALYSIS.md` is the analysis and
+  `tests/unit/test_pine_source.py` fails if either drifts.
+* `app/research/htr_reference.py` is a transcription for parity testing and
+  historical replay. It must never be imported by the live path, and it must
+  never be "cleaned up" away from the source's quirks. ADR 0005.
+* Intraday bar grids anchor on the **IST session open**, in all three places
+  that must agree: the contract's alignment check, the candle builder, and the
+  reference's input series. Never UTC midnight.
 * BUY may lead to buying a CE. SELL may lead to buying a PE. Neither is a broker
   instruction.
 * Do **not** add VWAP, RSI, MACD, Supertrend, moving-average crossover signals,
@@ -57,11 +67,12 @@ no order or trade path.
 ```
 app/api/          FastAPI gateway + TradingView ingress
 app/signals/      contracts, HTR adapter, timeframes, worker
-app/market_data/  session calendar; Kite adapter (M3)
+app/market_data/  session calendar, candle builder, feed health, protocols,
+                  mock provider, providers/{upstox,fyers} (M3)
 app/behavior/     behavioural features and decision engine (M4)
 app/strategy/     option selector, risk manager (M5)
 app/execution/    paper broker, position manager (M6)
-app/research/     replay, walk-forward (M7)
+app/research/     pine_ta, htr_reference, signal replay, walk-forward (M7)
 app/storage/      SQLite event store
 pine/             TradingView-side notes and alert templates
 docs/             PRD, ARD, ADRs, TEST_PLAN, M0 audit
@@ -77,7 +88,7 @@ authorization.
 ## Commands
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest        # 102 tests, offline
+.\.venv\Scripts\python.exe -m pytest        # 223 tests, offline
 .\.venv\Scripts\python.exe -m app           # local engine on 127.0.0.1:8788
 npm test                                    # pre-existing Node collector tests
 ```
@@ -88,7 +99,8 @@ authorization.
 
 ## Milestone gates
 
-M0 audit -> M1 HTR contract -> M2 receiver -> M3 Kite data -> M4 behaviour engine
--> M5 options+risk -> M6 paper executor -> M7 forward validation. Current state
+M0 audit -> M1 HTR contract -> M2 receiver -> M3 market data (Upstox live,
+FYERS research) -> M4 behaviour engine -> M5 options+risk -> M6 paper executor
+-> M7 forward validation. Current state
 is in `docs/PRD.md`. Do not start a milestone whose predecessor's gate has not
 been met, and do not move toward live broker trading.

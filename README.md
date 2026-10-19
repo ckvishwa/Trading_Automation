@@ -9,7 +9,7 @@ This repository now holds **two** things. Read this first so you run the right o
 | Port | 8788 | 8787 |
 | Webhook path | `/v1/webhooks/tradingview/<WEBHOOK_TOKEN>` | `/alert/<ALERT_KEY>` |
 | Store | `data/engine.db` (SQLite WAL) | `data/accepted-signals.jsonl` |
-| Tests | `.\.venv\Scripts\python.exe -m pytest` (102) | `npm test` (6) |
+| Tests | `.\.venv\Scripts\python.exe -m pytest` (223) | `npm test` (6) |
 
 Point your TradingView alert at **one** of them. Running both against the same
 alert double-counts the signal in two separate journals.
@@ -34,6 +34,15 @@ It binds to loopback. TradingView cannot reach it without your own
 authenticated HTTPS ingress on port 443 (TradingView accepts ports 80/443 only
 and cancels deliveries slower than three seconds).
 
+Recorded alerts can be replayed through the same validation and storage the live
+webhook uses, with the clock taken from each event rather than the wall clock:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.research replay --jsonl examples\replay\htr-session-sample.jsonl --dry-run
+```
+
+Drop `--dry-run` to write to the configured journal.
+
 Alert setup, including the exact alert-message JSON and the verification status
 of the Half Trend Regression indicator, is in [`pine/README.md`](pine/README.md).
 
@@ -42,9 +51,10 @@ of the Half Trend Regression indicator, is in [`pine/README.md`](pine/README.md)
 | Milestone | Status |
 |---|---|
 | M0 repository audit | PASS -- [`docs/AUDIT_M0.md`](docs/AUDIT_M0.md) |
-| M1 HTR signal contract | PARTIAL -- transport contract tested; indicator source, Pine version, alert-condition names and repaint behaviour **unverified** |
-| M2 FastAPI receiver | PASS -- 102 tests, live endpoint exercised |
-| M3 Kite market data onward | NOT STARTED |
+| M1 HTR signal contract | PARTIAL -- genuine Pine v5 source held and analysed ([`pine/HTR_ANALYSIS.md`](pine/HTR_ANALYSIS.md)); conditions, defaults and display-only inputs verified; historical repaint ruled out offline. Awaiting recorded genuine alerts for parity, and one live alert end to end |
+| M2 FastAPI receiver | PASS -- 223 tests, live endpoint exercised |
+| M3 market data (Upstox live, FYERS research) | IN PROGRESS -- provider-neutral interfaces, candle builder, feed watchdog, mock provider; no adapter, no credentials |
+| M4 behaviour engine onward | NOT STARTED |
 
 The exchange calendar in `data/reference/nse_calendar.json` ships **empty on
 purpose**: no NSE holiday data was invented. Until you fill it in from official

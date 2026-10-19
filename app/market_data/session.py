@@ -80,6 +80,17 @@ class SessionCalendar:
     def covers(self, trade_date: date) -> bool:
         return self._verified_through is not None and trade_date <= self._verified_through
 
+    def segment_open(self, segment: Segment = Segment.FO) -> time:
+        """Regular-session opening time (IST) for a segment.
+
+        Available even while the holiday list is unverified: session *timings*
+        and the holiday *calendar* are separate facts, and intraday bar
+        boundaries are anchored on the former. TradingView aligns intraday bars
+        to the session open, so this is the anchor an alert's bar-open timestamp
+        must sit on.
+        """
+        return _parse_hhmm(self._segments[segment.value]["regular_open"])
+
     def classify(self, moment: datetime, segment: Segment = Segment.FO) -> SessionStatus:
         """Classify a UTC instant against the given segment's schedule."""
         if moment.tzinfo is None:

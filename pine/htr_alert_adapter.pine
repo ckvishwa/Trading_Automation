@@ -1,61 +1,109 @@
-// =====================================================================
-//  TEMPLATE ONLY -- NOT RUNNABLE AS SHIPPED. DO NOT "FIX" BY GUESSING.
-// =====================================================================
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © AlgoAlpha
 //
-//  Purpose: emit the engine's alert JSON from the GENUINE Half Trend
-//  Regression [AlgoAlpha] reversal conditions.
+// ---------------------------------------------------------------------------
+// MODIFIED COPY. Changes from AlgoAlpha's original "Half Trend Regression
+// [AlgoAlpha]" (kept verbatim in ./half_trend_regression_algoalpha.pine):
 //
-//  This file contains NO trend calculation, on purpose. The indicator's
-//  logic has not been read or verified from this environment, and inventing
-//  an approximation of it would silently replace the strategy's only signal
-//  generator with something else.
+//   1. indicator() title changed so it can sit on the same chart as the original.
+//   2. A `message=` argument added to the Bullish and Bearish alertcondition
+//      calls, carrying this engine's webhook JSON.
+//   3. The Universal Trend Alert is removed: it fires on both directions, so a
+//      payload fired from it could not say which way the trend turned.
 //
-//  To complete it:
-//    1. Open https://www.tradingview.com/script/A9Dp4WrK-Half-Trend-Regression-AlgoAlpha/
-//    2. Use the script page's "Source code" view (it is published open-source).
-//    3. Paste the real source below the header, keeping its author attribution
-//       and licence terms intact.
-//    4. Replace the two placeholders with the real variables that become true
-//       on a bullish / bearish trend change.
-//    5. Set //@version to whatever the real source declares.
+// NOTHING ELSE IS CHANGED. The inputs, the calculations and both trend-change
+// conditions are byte-identical to the original, so this copy fires on exactly
+// the same bars. Verify that with:
+//   git diff --no-index half_trend_regression_algoalpha.pine htr_alert_adapter.pine
 //
-//  Simpler alternative that needs no Pine edit at all: create the alerts
-//  directly on the published indicator's own alert conditions and paste the
-//  JSON from ../examples/ as the alert message. See ./README.md.
+// This file is optional. The original indicator's own "Bullish Trend Alert" and
+// "Bearish Trend Alert" conditions work with the JSON pasted into TradingView's
+// alert dialog instead -- see ./HTR_ANALYSIS.md section 7.
 //
-//@version=0   // <-- REPLACE with the version the real HTR source declares
+// Create alerts with frequency "Once Per Bar Close". {{time}} is the triggering
+// bar's OPEN time; the engine derives the close and rejects anything that fired
+// before its bar closed.
+// ---------------------------------------------------------------------------
 
-indicator("HTR Alert Adapter (INCOMPLETE TEMPLATE)", overlay = true)
+//@version=5
+indicator("Half Trend Regression [AlgoAlpha] + engine alerts", shorttitle = "AlgoAlpha - Half Trend (engine)", overlay=true)
 
-// ---------------------------------------------------------------------
-// STEP 4: wire these to the real indicator's direction-change conditions.
-// They are intentionally left as compile-time errors so this file cannot be
-// run, or committed as "working", while the signal source is unverified.
-// ---------------------------------------------------------------------
-htrTurnedBullish = REPLACE_WITH_REAL_HTR_BULLISH_REVERSAL_CONDITION
-htrTurnedBearish = REPLACE_WITH_REAL_HTR_BEARISH_REVERSAL_CONDITION
+// Inputs grouped into 'Parameters'
+amplitude = input.int(2, "Amplitude", group="Parameters", tooltip="Look-back length of the indicator")
+channelDeviation = input.float(2.0, "Channel Deviation", minval=0.1, group="Parameters", tooltip="Deviation for the channel offset")
+linreglen = input.int(7, "Linear Regression Length", group="Parameters", tooltip="Length for linear regression calculations")
 
-// ---------------------------------------------------------------------
-// Alert payloads. Keep these byte-identical to ../examples/*.json so the
-// engine's contract tests describe what TradingView actually sends.
-//
-// {{time}} is the triggering bar's OPEN time; the engine derives the close.
-// Create the alerts with frequency "Once Per Bar Close".
-// ---------------------------------------------------------------------
-buyMessage = '{"indicator":"Half Trend Regression [AlgoAlpha]",' +
-     '"indicator_version":"A9Dp4WrK","event":"REVERSAL","signal":"BUY",' +
-     '"exchange":"{{exchange}}","ticker":"{{ticker}}","interval":"{{interval}}",' +
-     '"signal_price":"{{close}}","bar_open_time":"{{time}}",' +
-     '"fired_at":"{{timenow}}","mode":"PAPER"}'
+// Inputs in 'Appearance' group
+green = input.color(#00ffbb, "Bullish Color", group = "Appearance", tooltip="Color for bullish trend")
+red = input.color(#ff1100, "Bearish Color", group = "Appearance", tooltip="Color for bearish trend")
 
-sellMessage = '{"indicator":"Half Trend Regression [AlgoAlpha]",' +
-     '"indicator_version":"A9Dp4WrK","event":"REVERSAL","signal":"SELL",' +
-     '"exchange":"{{exchange}}","ticker":"{{ticker}}","interval":"{{interval}}",' +
-     '"signal_price":"{{close}}","bar_open_time":"{{time}}",' +
-     '"fired_at":"{{timenow}}","mode":"PAPER"}'
+// Calculations
+highs = ta.linreg(high, linreglen, 0)
+lows = ta.linreg(low, linreglen, 0)
+closes = ta.linreg(close, linreglen, 0)
 
-alertcondition(htrTurnedBullish, title = "HTR bullish reversal (engine)", message = buyMessage)
-alertcondition(htrTurnedBearish, title = "HTR bearish reversal (engine)", message = sellMessage)
+var float trendLine = na
+var int trendDirection = na
+var float maxLow = low
+var float minHigh = high
+
+atrPeriod = 100
+halfATR = ta.atr(atrPeriod) / 2
+channelOffset = channelDeviation * halfATR
+
+highMA = ta.sma(highs, amplitude)
+lowMA = ta.sma(lows, amplitude)
+highestHigh = ta.highest(highs, amplitude)
+lowestLow = ta.lowest(lows, amplitude)
+
+if na(trendDirection) and bar_index > linreglen
+    trendDirection := 1
+    trendLine := lowestLow
+else
+    if trendDirection == 1
+        maxLow := math.max(maxLow, lowestLow)
+        if highMA < maxLow and closes < lows[1]
+            trendDirection := -1
+            trendLine := highestHigh
+            minHigh := highs
+    else
+        minHigh := math.min(minHigh, highestHigh)
+        if lowMA > minHigh and closes > highs[1]
+            trendDirection := 1
+            trendLine := lowestLow
+            maxLow := lows
+
+if trendDirection == 1
+    trendLine := math.max(trendLine, lowestLow)
+else
+    trendLine := math.min(trendLine, highestHigh)
+
+upperChannel = trendLine + channelOffset
+lowerChannel = trendLine - channelOffset
+
+trendColor = trendDirection == 1 ? color.new(green, 0) : color.new(red, 0)
+
+// Plotting
+plotTrend = plot(trendLine, color=color.new(trendColor, 90), linewidth=2, title="Trend Line")
+lower = plot(trendDirection == 1 ? lowerChannel : na, title="Lower Channel", style=plot.style_linebr, display=display.none)
+upper = plot(trendDirection == -1 ? upperChannel : na, title="Upper Channel", style=plot.style_linebr, display=display.none)
+
+// Filling
+fill(plotTrend, lower, (open + close) / 2, lowerChannel, color.new(green, 95), color.new(green, 70))
+fill(plotTrend, upper, upperChannel, (open + close) / 2, color.new(red, 70), color.new(red, 95))
+
+// Trend Signals
+plotshape(ta.crossunder(trendDirection, 0) ? upperChannel : na, title="Bearish Trend", style=shape.labeldown, location=location.absolute, color=red, text="▼", textcolor=chart.fg_color, size=size.small)
+plotshape(ta.crossover(trendDirection, 0) ? lowerChannel : na, title="Bullish Trend", style=shape.labelup, location=location.absolute, color=green, text="▲", textcolor=chart.fg_color, size=size.small)
+
+// MODIFICATION: webhook payloads. Keep these byte-identical to ../examples/*.json
+// so the engine's contract tests describe what TradingView actually sends.
+buyMessage = '{"indicator":"Half Trend Regression [AlgoAlpha]","indicator_version":"A9Dp4WrK","event":"REVERSAL","signal":"BUY","exchange":"{{exchange}}","ticker":"{{ticker}}","interval":"{{interval}}","signal_price":"{{close}}","bar_open_time":"{{time}}","fired_at":"{{timenow}}","mode":"PAPER"}'
+sellMessage = '{"indicator":"Half Trend Regression [AlgoAlpha]","indicator_version":"A9Dp4WrK","event":"REVERSAL","signal":"SELL","exchange":"{{exchange}}","ticker":"{{ticker}}","interval":"{{interval}}","signal_price":"{{close}}","bar_open_time":"{{time}}","fired_at":"{{timenow}}","mode":"PAPER"}'
+
+// Alerts
+alertcondition(ta.crossunder(trendDirection, 0), title="Bearish Trend Alert", message=sellMessage)
+alertcondition(ta.crossover(trendDirection, 0), title="Bullish Trend Alert", message=buyMessage)
 
 // A BUY is a candidate bullish direction that MAY lead to buying a CE option
 // after the behavioural engine accepts it and risk checks pass. It is not a

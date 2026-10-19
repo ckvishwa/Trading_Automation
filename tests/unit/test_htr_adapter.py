@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 
 import pytest
 
@@ -164,3 +164,69 @@ def test_idempotency_key_separates_direction_and_bar():
         now=datetime(2026, 10, 20, 4, 45, 20, tzinfo=timezone.utc),
     ).event
     assert len({sell.idempotency_key, buy.idempotency_key, later.idempotency_key}) == 3
+
+
+ALIGNED_POLICY = SignalPolicy(
+    expected_indicator=INDICATOR,
+    allowed_symbols=("NSE:NIFTY",),
+    allowed_timeframes=("1m", "3m", "5m", "10m", "15m"),
+    session_open_ist=time(9, 15),
+)
+
+
+def test_bar_aligned_to_the_session_open_grid_is_accepted():
+    # 04:35Z == 10:05 IST == 50 minutes after the 09:15 open == ten 5m bars.
+    assert normalize(alert_payload(), policy=ALIGNED_POLICY).accepted
+
+
+def test_first_bar_of_the_session_is_accepted():
+    # 03:45Z == 09:15 IST, the session's opening bar, offset zero.
+    result = normalize(
+        alert_payload(bar_open_time="2026-10-20T03:45:00Z", fired_at="2026-10-20T03:50:00Z"),
+        now=datetime(2026, 10, 20, 3, 50, 20, tzinfo=timezone.utc),
+        policy=ALIGNED_POLICY,
+    )
+    assert result.accepted
+
+
+def test_bar_off_the_timeframe_grid_is_rejected():
+    # 04:37Z == 10:07 IST == 52 minutes after the open: not a whole 5m bar.
+    result = normalize(
+        alert_payload(bar_open_time="2026-10-20T04:37:00Z", fired_at="2026-10-20T04:42:00Z"),
+        now=datetime(2026, 10, 20, 4, 42, 20, tzinfo=timezone.utc),
+        policy=ALIGNED_POLICY,
+    )
+    assert result.reason is ReasonCode.BAR_NOT_ALIGNED_TO_TIMEFRAME
+
+
+def test_bar_before_the_session_open_is_rejected():
+    # 03:35Z == 08:45 IST, before the session opens.
+    result = normalize(
+        alert_payload(bar_open_time="2026-10-20T03:35:00Z", fired_at="2026-10-20T03:40:00Z"),
+        now=datetime(2026, 10, 20, 3, 40, 20, tzinfo=timezone.utc),
+        policy=ALIGNED_POLICY,
+    )
+    assert result.reason is ReasonCode.BAR_NOT_ALIGNED_TO_TIMEFRAME
+
+
+def test_alignment_anchors_on_the_session_open_not_utc_midnight():
+    # A 10m NSE bar opens at 09:15, 09:25, ... IST. 04:35Z == 10:05 IST is 50
+    # minutes after the open, so it IS a valid 10m bar -- even though 10:05 IST
+    # (04:35 UTC) is not on a 10-minute grid measured from UTC midnight.
+    result = normalize(
+        alert_payload(interval="10", fired_at="2026-10-20T04:45:00Z"),
+        now=datetime(2026, 10, 20, 4, 45, 20, tzinfo=timezone.utc),
+        policy=ALIGNED_POLICY,
+    )
+    assert result.accepted
+    assert result.event.timeframe == "10m"
+
+
+def test_alignment_check_is_skipped_when_no_anchor_is_configured():
+    # Without a session-open anchor the check is disabled rather than guessed.
+    off_grid = alert_payload(
+        bar_open_time="2026-10-20T04:37:00Z", fired_at="2026-10-20T04:42:00Z"
+    )
+    now = datetime(2026, 10, 20, 4, 42, 20, tzinfo=timezone.utc)
+    assert POLICY.session_open_ist is None
+    assert normalize(off_grid, now=now).accepted

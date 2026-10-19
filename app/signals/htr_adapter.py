@@ -13,7 +13,8 @@ downstream symptom.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
@@ -29,7 +30,10 @@ from app.signals.timeframes import (
     UnsupportedTimeframe,
     bar_close_from_open,
     canonical_timeframe,
+    timeframe_duration,
 )
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,9 @@ class SignalPolicy:
     max_signal_age_seconds: int = 120
     clock_skew_tolerance_seconds: int = 10
     required_mode: str = "PAPER"
+    # IST session-open time used as the intraday bar grid anchor. None disables
+    # the alignment check rather than guessing an anchor.
+    session_open_ist: time | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,20 @@ def normalize_alert(
     except UnsupportedTimeframe as exc:
         return _reject(ReasonCode.UNSUPPORTED_TIMEFRAME, str(exc))
 
+    if policy.session_open_ist is not None:
+        offset = _offset_from_session_open(alert.bar_open_time, policy.session_open_ist)
+        bar_length = timeframe_duration(timeframe)
+        if offset < timedelta(0) or offset % bar_length:
+            minutes = offset.total_seconds() / 60
+            local = alert.bar_open_time.astimezone(IST)
+            return _reject(
+                ReasonCode.BAR_NOT_ALIGNED_TO_TIMEFRAME,
+                f"bar_open {alert.bar_open_time.isoformat()} ({local:%H:%M} IST) is "
+                f"{minutes:+.0f} min from that day's "
+                f"{policy.session_open_ist:%H:%M} IST session open, "
+                f"not a whole number of {timeframe} bars",
+            )
+
     if alert.fired_at > now + skew:
         return _reject(
             ReasonCode.FUTURE_TIMESTAMP, f"fired_at={alert.fired_at.isoformat()} > now"
@@ -152,7 +173,23 @@ def normalize_alert(
     return NormalizationResult(event=event)
 
 
-def policy_from_settings(settings) -> SignalPolicy:
+def _offset_from_session_open(bar_open: datetime, session_open: time) -> timedelta:
+    """Distance from that trading day's session open to this bar's open.
+
+    TradingView anchors intraday bars to the session open, so a genuine
+    `Once Per Bar Close` alert on an N-minute chart always carries a bar_open
+    that is a whole number of N-minute bars after the open. Anchoring on UTC
+    midnight instead would wrongly reject timeframes that do not divide the
+    09:15 IST offset evenly.
+    """
+    local = bar_open.astimezone(IST)
+    anchor = local.replace(
+        hour=session_open.hour, minute=session_open.minute, second=0, microsecond=0
+    )
+    return local - anchor
+
+
+def policy_from_settings(settings, session_open_ist: time | None = None) -> SignalPolicy:
     """Build the contract policy from typed application settings."""
     return SignalPolicy(
         expected_indicator=settings.expected_indicator,
@@ -161,4 +198,5 @@ def policy_from_settings(settings) -> SignalPolicy:
         max_signal_age_seconds=settings.max_signal_age_seconds,
         clock_skew_tolerance_seconds=settings.clock_skew_tolerance_seconds,
         required_mode=settings.trading_mode,
+        session_open_ist=session_open_ist,
     )
