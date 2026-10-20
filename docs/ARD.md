@@ -1,11 +1,8 @@
 # Architecture Reference Document
 
 **Scope of this document:** it describes the code that exists, not the design
-intent. Components marked NOT IMPLEMENTED have no code behind them. Last
-updated 2026-10-20, after loading NSE's official holiday API for both
-segments, the effective-dated 15:40 F&O session, Analytics Token support,
-explicit feed-verification states, option selection, and the M4 feature
-engine.
+intent. Components marked NOT IMPLEMENTED have no code behind them. The M4
+window-integrity guards and documentation were verified on 2026-10-19.
 
 ## Responsibility split
 
@@ -51,9 +48,9 @@ Signal event worker                        [OBSERVE-ONLY -- M2]
   app/signals/worker.py  logs backlog; decides nothing
         |
         v
-Behavioural engine                         [NOT IMPLEMENTED -- M4]
+Behavioural engine                         [PARTIAL -- M4]
   candle behaviour | market structure | momentum | volatility
-  | pattern similarity | validated signal-outcome statistics
+  pattern similarity + validated outcomes  [NOT IMPLEMENTED]
         ^
         |  completed candles, live index data, option quotes
 Provider-neutral market-data layer         [PARTIAL -- M3]
@@ -75,9 +72,9 @@ Provider-neutral market-data layer         [PARTIAL -- M3]
                                                              UNAUTHENTICATED]
         |
         v
-ACCEPT / REJECT + reason codes             [NOT IMPLEMENTED -- M4]
+ACCEPT / REJECT / ABSTAIN + reason codes   [PARTIAL -- M4]
         v
-Option selector (CE/PE, strike, expiry)    [NOT IMPLEMENTED -- M5]
+Option selector (CE/PE, strike, expiry)    [PARTIAL -- M3]
         v
 Risk manager                               [NOT IMPLEMENTED -- M5]
         v
@@ -278,11 +275,17 @@ real decision.
 candles only, with no look-ahead and no `nan`: candle-body ratio, wick
 rejection, consecutive runs, higher-high/lower-low structure, failed
 breakout/breakdown, momentum and acceleration, volatility compression/expansion.
+The extractor requires contiguous completed bars of one symbol, timeframe and
+duration. The decision engine checks that the final candle is exactly the HTR
+signal bar; precomputed features must carry that same bar-close timestamp.
+Mismatches fail closed with `DATA_INTEGRITY_FAILURE`.
 `app/behavior/decision_engine.py` is an ACCEPT/REJECT/ABSTAIN filter over HTR
 signals -- it generates no BUY/SELL, defaults to REJECT with
 `INSUFFICIENT_HISTORICAL_EVIDENCE` (no validated edge; `evidence_validated` is
 False), and manufactures no win rate (`estimated_edge` is always None). Not yet
 wired into the live pipeline.
+Chronological validation on genuine recorded alerts and outcomes is still
+missing, so the M4 exit gate remains open.
 
 ## Research layer (M1 parity, M7 replay)
 

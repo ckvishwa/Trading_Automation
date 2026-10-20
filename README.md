@@ -9,7 +9,7 @@ This repository now holds **two** things. Read this first so you run the right o
 | Port | 8788 | 8787 |
 | Webhook path | `/v1/webhooks/tradingview/<WEBHOOK_TOKEN>` | `/alert/<ALERT_KEY>` |
 | Store | `data/engine.db` (SQLite WAL) | `data/accepted-signals.jsonl` |
-| Tests | `.\.venv\Scripts\python.exe -m pytest` (583) | `npm test` (6) |
+| Tests | `.\.venv\Scripts\python.exe -m pytest` (586 passed, 2 skipped on 2026-10-19) | `npm test` (6 passed) |
 
 Point your TradingView alert at **one** of them. Running both against the same
 alert double-counts the signal in two separate journals.
@@ -52,24 +52,23 @@ of the Half Trend Regression indicator, is in [`pine/README.md`](pine/README.md)
 |---|---|
 | M0 repository audit | PASS -- [`docs/AUDIT_M0.md`](docs/AUDIT_M0.md) |
 | M1 HTR signal contract | PARTIAL -- genuine Pine v5 source held and analysed ([`pine/HTR_ANALYSIS.md`](pine/HTR_ANALYSIS.md)); conditions, defaults and display-only inputs verified; historical repaint ruled out offline. Awaiting recorded genuine alerts for parity, and one live alert end to end |
-| M2 FastAPI receiver | PASS -- 502 tests, live endpoint exercised, full transport telemetry |
+| M2 FastAPI receiver | PASS -- offline endpoint exercised with the test client; full transport telemetry |
 | M3 market data (Upstox live, FYERS research) | PARTIAL -- transport complete offline; official NSE holidays (both segments) + effective-dated 15:40 F&O session; Analytics Token; explicit verification states + historical parity; ATM option selection. **Live BLOCKED**: no credentials |
-| M4 behaviour engine | STARTED -- deterministic feature extractor + ACCEPT/REJECT/ABSTAIN interface; rejects for lack of validated evidence by default |
+| M4 behaviour engine | PARTIAL -- deterministic features and decision filter; rejects future signal-bar data and gapped candle windows; no validated historical edge or chronological outcome validation yet |
 | M5 options+risk onward | NOT STARTED |
 
-The exchange calendar in `data/reference/nse_calendar.json` now carries the
-**official 2026 F&O holiday list** from NSE circular NSE/FAOP/71777 (12 Dec
-2025), hash-recorded. What it still does not carry: the cash-segment holiday
-list (a separate circular) and any session timings (no circular read states
-them). The rules the code enforces:
+The exchange calendar in `data/reference/nse_calendar.json` carries official
+2026 holiday coverage for cash and F&O from NSE's holiday API, with source
+hashes. Session windows are effective-dated: the F&O continuous close changes
+from 15:30 to 15:40 IST on 2026-08-03. The rules the code enforces:
 
 * **unofficial data may close the market, never open it;**
 * an official holiday list does **not** make the session timings official.
 
 So 2026-10-20 (Dussehra) reports `HOLIDAY` officially for F&O, Muhurat on Sunday
-2026-11-08 reports `UNSUPPORTED_SESSION` because the circular says its timings
-will be "notified subsequently", and an ordinary trading day still reports
-`UNVERIFIED_CALENDAR` until you mark the session windows `official`.
+2026-11-08 reports `UNSUPPORTED_SESSION` until its timings are published, and
+an ordinary date covered by the official calendar can report `OPEN` during its
+effective session window.
 
 Live market data is **BLOCKED** until credentials exist:
 

@@ -250,12 +250,18 @@ def extract_features(
         raise InsufficientHistory(len(candles), need)
 
     previous: Candle | None = None
+    bar_duration = candles[0].close_time - candles[0].open_time
     for candle in candles:
         if previous is not None and candle.open_time <= previous.open_time:
             raise ValueError("feature window must be strictly ascending by open_time")
         if candle.symbol != candles[0].symbol or candle.timeframe != candles[0].timeframe:
             raise ValueError("feature window must be one symbol and one timeframe")
+        if candle.close_time - candle.open_time != bar_duration:
+            raise ValueError("feature window must use one bar duration")
         previous = candle
+
+    if any(current.open_time != earlier.close_time for earlier, current in zip(candles, candles[1:])):
+        raise ValueError("feature window must contain contiguous completed bars")
 
     last = candles[-1]
     data: dict = {}

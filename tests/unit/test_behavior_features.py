@@ -80,6 +80,14 @@ def test_a_mixed_symbol_window_is_refused():
         extract_features(window)
 
 
+def test_a_missing_bar_is_not_silently_treated_as_contiguous_history():
+    window = rising_window()
+    window.pop(4)
+    window.append(bar(MIN_WINDOW, 150, 156, 149, 155))
+    with pytest.raises(ValueError, match="contiguous"):
+        extract_features(window)
+
+
 # --- determinism and no look-ahead --------------------------------------------
 
 
