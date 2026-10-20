@@ -44,14 +44,15 @@ def window(n: int = MIN_WINDOW + 2) -> list[Candle]:
 
 
 def event(**overrides) -> NormalizedSignalEvent:
+    decision_open = OPEN + (MIN_WINDOW + 1) * BAR
     base = dict(
         symbol="NSE:NIFTY",
         timeframe="5m",
         signal=SignalDirection.BUY,
-        bar_open_time=OPEN,
-        bar_close_time=OPEN + BAR,
-        fired_at=OPEN + BAR,
-        received_at=OPEN + BAR,
+        bar_open_time=decision_open,
+        bar_close_time=decision_open + BAR,
+        fired_at=decision_open + BAR,
+        received_at=decision_open + BAR,
         signal_price=100.0,
         idempotency_key="k",
     )
@@ -75,7 +76,7 @@ def test_default_engine_rejects_for_lack_of_evidence_even_on_clean_data():
 
 
 def test_insufficient_history_rejects_with_its_own_reason():
-    decision = BehaviorDecisionEngine().decide(event(), window(MIN_WINDOW - 2))
+    decision = BehaviorDecisionEngine().decide(event(), window()[4:])
     assert decision.decision is Decision.REJECT
     assert decision.reason_codes == (ReasonCode.INSUFFICIENT_HISTORICAL_EVIDENCE,)
     assert decision.features is None
@@ -85,6 +86,22 @@ def test_a_bad_window_rejects_with_data_integrity():
     bad = window()
     bad[-1], bad[-2] = bad[-2], bad[-1]  # not ascending
     decision = BehaviorDecisionEngine().decide(event(), bad)
+    assert decision.reason_codes == (ReasonCode.DATA_INTEGRITY_FAILURE,)
+
+
+def test_future_candles_cannot_influence_a_signal_decision():
+    engine = BehaviorDecisionEngine(DecisionConfig(evidence_validated=True))
+    future_window = window(MIN_WINDOW + 3)
+    decision = engine.decide(event(), future_window)
+    assert decision.decision is Decision.REJECT
+    assert decision.reason_codes == (ReasonCode.DATA_INTEGRITY_FAILURE,)
+
+
+def test_features_from_another_bar_cannot_be_accepted():
+    engine = BehaviorDecisionEngine(DecisionConfig(evidence_validated=True))
+    features = extract_features(window(MIN_WINDOW + 3))
+    decision = engine.decide_from_features(event(), features)
+    assert decision.decision is Decision.REJECT
     assert decision.reason_codes == (ReasonCode.DATA_INTEGRITY_FAILURE,)
 
 

@@ -70,9 +70,9 @@ exceed them: gaps, slippage and the full long-option premium are all at risk.
 |---|---|---|---|
 | M0 | Repository audit and architecture | Existing state verified, documented | **PASS** -- `docs/AUDIT_M0.md` |
 | M1 | HTR alert integration | Exact signal contract verified | **PARTIAL** -- source obtained and analysed; conditions, defaults, state machine and display-only inputs verified; historical repaint ruled out offline; full transport telemetry and separated freshness/alignment budgets in place. Still missing: parity against recorded genuine alerts, and one live alert received end to end |
-| M2 | FastAPI receiver | BUY/SELL, validation, dedup tests pass | **PASS** -- 223 tests, live endpoint exercised |
+| M2 | FastAPI receiver | BUY/SELL, validation, dedup tests pass | **PASS** -- endpoint exercised through the offline test client; contract and dedup tests pass |
 | M3 | Market data (Upstox live, FYERS research) | Feed, candles, instruments verified | **PARTIAL** -- transport complete offline; official NSE holidays for both segments + effective-dated 15:40 F&O session; Analytics Token support; explicit feed-verification states with historical-parity comparison; ATM/near-ATM option selection and quote assessment. **Live still BLOCKED**: no credentials, no socket ever opened |
-| M4 | Behaviour engine | Replay and chronological validation pass | **STARTED** -- deterministic offline feature extractor (candle/structure/momentum/volatility) and ACCEPT/REJECT/ABSTAIN decision interface with reason codes. Rejects for INSUFFICIENT_HISTORICAL_EVIDENCE by default; no validated edge, no manufactured win rates |
+| M4 | Behaviour engine | Replay and chronological validation pass | **PARTIAL** -- deterministic offline features and ACCEPT/REJECT/ABSTAIN decisions; signal-bar alignment and contiguous candle history are checked. Defaults to INSUFFICIENT_HISTORICAL_EVIDENCE. Genuine alert outcomes and out-of-sample chronological validation are still missing, so the exit gate has not passed |
 | M5 | Options and risk engine | Contract and risk tests pass | NOT STARTED |
 | M6 | Paper trading | Deterministic fills and zero-order guarantee | NOT STARTED |
 | M7 | Forward validation | Measured results, no fabricated performance | NOT STARTED |

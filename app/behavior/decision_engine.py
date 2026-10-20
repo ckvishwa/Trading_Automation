@@ -132,6 +132,13 @@ class BehaviorDecisionEngine:
         signal_id: str | None = None,
     ) -> BehaviorDecision:
         """Decide on one HTR signal given the candles up to its bar."""
+        if window and (
+            window[-1].symbol != event.symbol
+            or window[-1].timeframe != event.timeframe
+            or window[-1].open_time != event.bar_open_time
+            or window[-1].close_time != event.bar_close_time
+        ):
+            return self._reject(signal_id, None, (ReasonCode.DATA_INTEGRITY_FAILURE,))
         try:
             features = extract_features(window)
         except InsufficientHistory:
@@ -155,6 +162,11 @@ class BehaviorDecisionEngine:
         Split out so a replay can decide from stored features without recomputing
         them, and so tests can drive the rule layer directly.
         """
+        if features.decision_bar_time != event.bar_close_time:
+            return self._reject(
+                signal_id, features, (ReasonCode.DATA_INTEGRITY_FAILURE,)
+            )
+
         objections: list[ReasonCode] = []
         for rule in self._config.rules:
             code = rule(event, features)

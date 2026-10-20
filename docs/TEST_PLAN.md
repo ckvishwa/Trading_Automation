@@ -1,13 +1,11 @@
 # Test plan and evidence
 
-Updated 2026-10-20, after the official NSE holiday API, the effective-dated
-15:40 F&O session, Analytics Token support, feed-verification states, option
-selection, and the M4 feature engine.
+Updated 2026-10-19 after the M4 decision-window and candle-gap regression checks.
 
 ## How to run
 
 ```powershell
-# Python engine (583 tests, fully offline)
+# Python engine (586 passed, 2 skipped in the latest run)
 .\.venv\Scripts\python.exe -m pytest
 
 # Pre-existing Node signal collector (6 tests, untouched)
@@ -24,10 +22,7 @@ authorization are present.
 
 | Suite | Command | Result |
 |---|---|---|
-| Python, all | `python -m pytest` | **583 passed**, 2 skipped, 0 failed, 1 warning |
-| Python unit | `python -m pytest tests/unit` | **486 passed** |
-| Python contract | `python -m pytest tests/contract` | **31 passed** |
-| Python replay | `python -m pytest tests/replay` | **66 passed, 2 skipped** |
+| Python, all | `python -m pytest` | **586 passed**, 2 skipped, 0 failed, 1 warning |
 | Node (pre-existing) | `npm test` | **6 passed**, 0 failed |
 
 The two skips are deliberate and visible on purpose: the HTR parity placeholder
@@ -73,7 +68,7 @@ reported; `assess_universe` reports per contract.
 
 ### `tests/unit/test_behavior_features.py`
 Guards: too few candles raises rather than returning partial features; a
-non-ascending or mixed-symbol window is a caller error. **Determinism** and **no
+non-ascending, mixed-symbol or gapped window is a caller error. **Determinism** and **no
 look-ahead** (a bar's features are identical whether or not a later bar exists).
 Per group: body/wick ratios on a known shape and a zero-range doji yielding zeros
 not `nan`; consecutive runs; higher-high run and HH/HL structure; failed breakout
@@ -84,7 +79,8 @@ compression below one when ranges shrink; plain-type serialization.
 ### `tests/unit/test_behavior_decision.py`
 **The default engine rejects clean data for INSUFFICIENT_HISTORICAL_EVIDENCE** --
 no validated edge, so abstaining is the honest outcome. Insufficient history and
-a bad window reject with their own reasons. A rule objection blocks accept even
+a bad window reject with their own reasons. A future-bar window or stored features
+from another signal bar cannot reach ACCEPT. A rule objection blocks accept even
 with validation enabled. ACCEPT is reachable **only** when `evidence_validated`
 is explicitly set and no rule objects -- proving the path exists without flipping
 it on. The default engine cannot accept whatever the features; decisions are
@@ -565,11 +561,8 @@ with the engine's session grid, and regenerated with
   downloads *have* been made and verified -- the Protobuf schema, the NSE
   instrument file and the NSE F&O circular -- but every module still carries
   `VERIFIED_AGAINST_LIVE_ACCOUNT = False`.
-* **The cash-segment holiday list is still unofficial.** The retrieved circular
-  covers F&O only; the cash list is a separate circular that has not been read,
-  and is deliberately not inferred from the F&O one.
-* **No session timings are official.** No circular read here states them, so
-  every ordinary trading day reports `UNVERIFIED_CALENDAR`.
+* **Calendar coverage is effective-dated.** The official NSE holiday API covers
+  cash and F&O; the F&O 15:40 session close applies from 2026-08-03, not earlier.
 * **Muhurat 2026 timings are unknown**, by the circular's own wording, so that
   session reports `UNSUPPORTED_SESSION`.
 * **The feed's timestamp timezone is unverified.** Millisecond epochs are read
@@ -591,10 +584,11 @@ with the engine's session grid, and regenerated with
   byte-identical to the original, but no TradingView compile has been run.
 * **No live feed has been consumed.** Subscription management, normalization
   and rate limiting are tested against fixtures and documented limits only.
-* **No behavioural, option-selection, risk or execution tests.** M4-M6. Replay
-  covers ingestion only: no outcomes, no P&L.
+* **No chronological behavioural outcome validation or paper execution tests.**
+  Current replay covers ingestion and market-data normalization, not a validated
+  HTR filter edge, option P&L, or M4's out-of-sample gate.
 * **No test of the operator's HTTPS ingress**, including the three-second
   TradingView timeout under real network conditions.
 * **No load or concurrency test** on the single-writer SQLite connection.
-* The shipped exchange calendar is empty, so no test asserts correct behaviour
-  on a real NSE holiday.
+* The calendar has official 2026 coverage and tests for holiday/session rules;
+  later calendar years need their own official data.
