@@ -78,9 +78,20 @@ no order or trade path.
 * A holiday list being official does not make session timings official, and the
   F&O circular says nothing about the cash segment. Keep the provenance of each
   fact separate, per segment.
-* Live access fails closed: no credentials means `LIVE BLOCKED` with a non-zero
-  exit, never a degraded "live" run. Credentials come from the environment only
-  and are registered with the log redactor.
+* Live access fails closed: no credentials means `AUTHENTICATION_BLOCKED` with a
+  non-zero exit, never a degraded "live" run. Prefer the read-only Analytics
+  Token (`UPSTOX_ANALYTICS_TOKEN`); credentials come from the environment only
+  and are registered with the log redactor. TLS verification stays on.
+* A connected socket is not a verified feed. Only `LIVE_STREAM_VERIFIED`
+  (validated ticks + a completed candle) or `HISTORICAL_PARITY_VERIFIED` (built
+  candles match Upstox historical bar for bar) count as live-verified. Missing
+  bars are reported, never filled.
+* Session timings are effective-dated: the F&O 15:40 close applies only from
+  2026-08-03. Never apply a rule change retroactively.
+* The behavioural engine filters HTR signals; it never generates BUY/SELL and
+  never ACCEPTs without `evidence_validated` explicitly set. It manufactures no
+  win rate, probability or edge -- `estimated_edge` is always None. Features use
+  completed candles only, with no look-ahead.
 * **Access logging stays off** (`ACCESS_LOG_ENABLED` in `app/__main__.py`): the
   webhook token is in the URL path. Secret redaction belongs on log *handlers*,
   not loggers.
@@ -98,7 +109,8 @@ app/api/          FastAPI gateway + TradingView ingress
 app/signals/      contracts, HTR adapter, timeframes, worker
 app/market_data/  session calendar, candle builder, feed health, protocols,
                   contracts, mock provider, providers/{upstox,fyers} (M3)
-app/behavior/     behavioural features and decision engine (M4)
+app/behavior/     features (deterministic, completed-candle) + decision
+                  engine (ACCEPT/REJECT/ABSTAIN, reason codes) (M4)
 app/strategy/     option selector, risk manager (M5)
 app/execution/    paper broker, position manager (M6)
 app/research/     pine_ta, htr_reference, signal replay, walk-forward (M7)
@@ -117,7 +129,7 @@ authorization.
 ## Commands
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest        # 502 tests, offline
+.\.venv\Scripts\python.exe -m pytest        # 583 tests, offline
 .\.venv\Scripts\python.exe -m app           # local engine on 127.0.0.1:8788
 npm test                                    # pre-existing Node collector tests
 ```

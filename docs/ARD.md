@@ -2,9 +2,10 @@
 
 **Scope of this document:** it describes the code that exists, not the design
 intent. Components marked NOT IMPLEMENTED have no code behind them. Last
-updated 2026-10-19, after vendoring Upstox's official Protobuf schema,
-verifying instrument metadata against the real file, and loading the
-official NSE F&O holiday circular.
+updated 2026-10-20, after loading NSE's official holiday API for both
+segments, the effective-dated 15:40 F&O session, Analytics Token support,
+explicit feed-verification states, option selection, and the M4 feature
+engine.
 
 ## Responsibility split
 
@@ -12,7 +13,7 @@ official NSE F&O holiday circular.
 |---|---|
 | TradingView / Pine | Signal **generation** only (Half Trend Regression reversals) |
 | Python engine | Contract validation, behavioural decisions, risk, paper simulation, evaluation |
-| Upstox | Live market **data** only -- adapter and official Protobuf decoder implemented, **no credentials, never run against a live account** |
+| Upstox | Live market **data** only -- adapter, official Protobuf decoder, Analytics-Token auth path and feed-verification states implemented, **no credentials, never run against a live account** |
 | FYERS | Historical research **data** only -- adapter implemented, same caveat |
 
 The decision engine is deliberately separate from broker connectivity, and every
@@ -248,6 +249,41 @@ existing bar is never rewritten. A malformed frame is counted and skipped; a
 bucket with no ticks produces no candle. `python -m app.research market-replay`
 runs it.
 
+## Feed verification states (M3)
+
+A connected socket is not a verified feed. `app/market_data/verification.py`
+holds a lattice -- `AUTHENTICATION_BLOCKED`, `AUTHENTICATION_FAILED`,
+`SOCKET_CONNECTED`, `MARKET_CLOSED`, `LIVE_DATA_INVALID`, `LIVE_STREAM_VERIFIED`,
+`HISTORICAL_PARITY_VERIFIED` -- and `FeedVerification` resolves accumulated facts
+to the strongest state they support. `LIVE_STREAM_VERIFIED` needs validated
+ticks and a completed candle; `HISTORICAL_PARITY_VERIFIED` needs those candles to
+match Upstox historical candles exactly (`compare_candles`, which reports OHLC
+mismatches and missing/extra bars and never calls an empty comparison parity).
+`tools/upstox_live_smoke.py` drives this live, preferring the read-only Analytics
+Token; its authorize call hits `/v3/feed/market-data-feed/authorize` and the
+one-time signed URL is never logged.
+
+## Option selection (M3)
+
+`app/strategy/option_selector.py` chooses the ATM and near-ATM CE/PE contracts
+for the nearest **unexpired** listed expiry, from strikes that actually exist,
+and assesses each contract's quote for two-sidedness, freshness and a spread
+ceiling. It is market-data work: it opens no position and imports nothing that
+could. Expired contracts are excluded; mock-sourced quotes are rejected for a
+real decision.
+
+## Behavioural engine (M4, start)
+
+`app/behavior/features.py` extracts deterministic features from completed
+candles only, with no look-ahead and no `nan`: candle-body ratio, wick
+rejection, consecutive runs, higher-high/lower-low structure, failed
+breakout/breakdown, momentum and acceleration, volatility compression/expansion.
+`app/behavior/decision_engine.py` is an ACCEPT/REJECT/ABSTAIN filter over HTR
+signals -- it generates no BUY/SELL, defaults to REJECT with
+`INSUFFICIENT_HISTORICAL_EVIDENCE` (no validated edge; `evidence_validated` is
+False), and manufactures no win rate (`estimated_edge` is always None). Not yet
+wired into the live pipeline.
+
 ## Research layer (M1 parity, M7 replay)
 
 `app/research/` is **not imported by the live path**
@@ -260,6 +296,9 @@ runs it.
   source, for parity testing and historical signal reproduction. Exposes
   per-bar internal state so a parity mismatch can be diagnosed, and
   `compare_with_recorded`, which reports parity only on exact agreement.
+* `htr_parity.py` -- the M1 gate: compares genuine recorded TradingView alerts
+  against the reference, and refuses to report parity on non-genuine input
+  (`docs/M1_HTR_EVIDENCE.md`).
 * `replay.py` -- deterministic chronological replay of recorded alert payloads
   through the **same** adapter and store the HTTP path uses. The clock comes from
   each event, so a replay of months-old alerts is not rejected as stale, and two

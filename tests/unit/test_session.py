@@ -213,81 +213,90 @@ def shipped() -> SessionCalendar:
     return SessionCalendar.load(PROJECT_ROOT / "data" / "reference" / "nse_calendar.json")
 
 
-def test_shipped_calendar_has_official_fo_holidays_and_nothing_else_official(shipped):
-    """What the circular does and does not establish.
+def test_shipped_calendar_has_official_holidays_for_both_segments(shipped):
+    """Holidays are official for both segments; timings are official too.
 
-    NSE/FAOP/71777 gives the 2026 F&O holiday list. It states no session
-    timings, and it says nothing about the cash segment. So the F&O holiday
-    horizon is official while the timings stay unofficial and the cash horizon
-    stays null -- an official holiday list must not be allowed to vouch for
-    either.
+    The holiday lists come from NSE's own holiday-master API (CM and FO). The
+    session timings are the published NSE windows, including the 2026-08-03
+    extension. What is NOT official is the Muhurat session's timings, which NSE
+    has not yet notified -- that stays UNSUPPORTED_SESSION.
     """
     assert shipped.holidays_official_through(Segment.FO) == date(2026, 12, 31)
-    assert shipped.holidays_official_through(Segment.CASH) is None
+    assert shipped.holidays_official_through(Segment.CASH) == date(2026, 12, 31)
     assert all(
-        window.source is SourceTrust.UNOFFICIAL
+        window.source is SourceTrust.OFFICIAL
         for segment in (Segment.FO, Segment.CASH)
         for window in shipped.windows(segment)
     )
 
 
-def test_shipped_calendar_records_the_circular_it_came_from(shipped):
+def test_shipped_calendar_records_the_sources_it_came_from(shipped):
     official = shipped.sources["official_retrieved"]
-    assert len(official) == 1
-    circular = official[0]
-    assert circular["circular"] == "NSE/FAOP/71777"
-    assert circular["circular_date"] == "2025-12-12"
-    assert circular["segment"] == "FO"
-    assert circular["url"].endswith("/FAOP71777.pdf")
-    assert len(circular["sha256"]) == 64
-    assert circular["retrieved_at_utc"].endswith("Z")
-    # The cash list and the session timings are recorded as outstanding, not
-    # quietly assumed.
+    # The holiday-master API, the corroborating F&O circular, and the session
+    # extension are all recorded with their provenance.
+    apis = [item for item in official if "holiday-master" in item.get("url", "")]
+    assert apis and len(apis[0]["sha256"]) == 64
+    circulars = [item for item in official if item.get("circular") == "NSE/FAOP/71777"]
+    assert circulars and circulars[0]["circular_date"] == "2025-12-12"
+    # The session-timing page could not be byte-captured: that is recorded
+    # honestly rather than claimed as retrieved.
+    extension = [item for item in official if item.get("effective_from") == "2026-08-03"]
+    assert extension and "NOT byte-captured" in extension[0]["retrieved"]
+    # What remains outstanding is named, not quietly assumed.
     outstanding = " ".join(item["what"] for item in shipped.sources["still_needed"])
-    assert "Capital Market" in outstanding
-    assert "session timings" in outstanding
+    assert "session-timing" in outstanding
     assert "Muhurat" in outstanding
 
 
-def test_shipped_calendar_never_reports_open(shipped):
-    # Timings are unofficial, so no ordinary day can be open whatever the
-    # holiday list says.
-    for moment in (
-        TUESDAY_MIDSESSION,
-        datetime(2026, 10, 19, 4, 40, tzinfo=timezone.utc),
-        datetime(2026, 6, 10, 6, 0, tzinfo=timezone.utc),
-    ):
-        for segment in (Segment.FO, Segment.CASH):
-            assert not shipped.classify(moment, segment).is_open
-
-
-def test_an_official_holiday_list_does_not_make_the_timings_official(shipped):
-    # 2026-10-19 is an ordinary Monday inside the official F&O holiday horizon.
+def test_shipped_calendar_reports_open_during_an_official_session(shipped):
+    # 2026-09-07 is a Monday after the extension; 10:00 IST == 04:30 UTC.
     status = shipped.classify(
-        datetime(2026, 10, 19, 4, 40, tzinfo=timezone.utc), Segment.FO
+        datetime(2026, 9, 7, 4, 30, tzinfo=timezone.utc), Segment.FO
     )
-    assert status.calendar_verified is True  # the holiday list covers the date
-    assert status.state is SessionState.UNVERIFIED_CALENDAR  # the timings do not
-    assert "source=unofficial" in status.detail
+    assert status.state is SessionState.OPEN
+    assert status.is_open and status.may_trade
 
 
-def test_shipped_calendar_closes_2026_10_20_officially_for_fo(shipped):
-    """Dussehra, Tuesday 2026-10-20 -- entry 12 of the circular's table."""
-    status = shipped.classify(TUESDAY_MIDSESSION, Segment.FO)
-    assert status.state is SessionState.HOLIDAY
-    assert "Dussehra" in status.detail
-    assert "source=official" in status.detail
-    assert status.calendar_verified is True
-    assert not status.is_open
+def test_the_fo_session_extends_to_1540_only_from_2026_08_03(shipped):
+    """Task 1's core check, both sides of the effective date.
+
+    15:35 IST == 10:05 UTC. Before 2026-08-03 the F&O session closed 15:30, so
+    15:35 is CLOSED; on/after it closes 15:40, so 15:35 is OPEN. The rule change
+    is effective-dated, never applied retroactively.
+    """
+    before = datetime(2026, 7, 6, 10, 5, tzinfo=timezone.utc)  # Mon pre-extension
+    after = datetime(2026, 9, 7, 10, 5, tzinfo=timezone.utc)  # Mon post-extension
+    assert shipped.classify(before, Segment.FO).state is SessionState.CLOSED
+    assert shipped.classify(after, Segment.FO).state is SessionState.OPEN
+    # 15:41 IST == 10:11 UTC is past even the extended close.
+    just_after = datetime(2026, 9, 7, 10, 11, tzinfo=timezone.utc)
+    assert shipped.classify(just_after, Segment.FO).state is SessionState.CLOSED
+    # The window selected for a post-extension date closes at 15:40.
+    window = shipped.window_for(date(2026, 9, 7), Segment.FO)
+    assert window.regular_close == time(15, 40)
+    assert window.effective_from == date(2026, 8, 3)
 
 
-def test_shipped_calendar_also_closes_2026_10_20_for_cash_but_unofficially(shipped):
-    # The cash circular has not been read. A third-party entry may close the
-    # day; it may never open one, and it does not claim verification.
-    status = shipped.classify(TUESDAY_MIDSESSION, Segment.CASH)
-    assert status.state is SessionState.HOLIDAY
-    assert "source=unofficial" in status.detail
-    assert status.calendar_verified is False
+def test_the_cash_segment_keeps_its_1530_close(shipped):
+    # The extension is a derivatives change; the cash continuous session is
+    # unchanged at 15:30 (CAS is modelled as metadata, not a new close).
+    window = shipped.window_for(date(2026, 9, 7), Segment.CASH)
+    assert window.regular_close == time(15, 30)
+    # 15:35 IST == 10:05 UTC: open for F&O, closed for cash on the same day.
+    moment = datetime(2026, 9, 7, 10, 5, tzinfo=timezone.utc)
+    assert shipped.classify(moment, Segment.FO).state is SessionState.OPEN
+    assert shipped.classify(moment, Segment.CASH).state is SessionState.CLOSED
+
+
+def test_shipped_calendar_closes_2026_10_20_officially_for_both_segments(shipped):
+    """Dussehra, Tuesday 2026-10-20 -- in both the API and the circular."""
+    for segment in (Segment.FO, Segment.CASH):
+        status = shipped.classify(TUESDAY_MIDSESSION, segment)
+        assert status.state is SessionState.HOLIDAY
+        assert "Dussehra" in status.detail
+        assert "source=official" in status.detail
+        assert status.calendar_verified is True
+        assert not status.is_open
 
 
 @pytest.mark.parametrize(
@@ -320,20 +329,27 @@ def test_every_weekday_holiday_in_the_circular_closes_the_fo_segment(
     assert "source=official" in status.detail
 
 
-def test_the_circular_lists_fifteen_weekday_and_three_weekend_fo_holidays(shipped):
+def test_the_api_lists_twenty_official_fo_holidays_including_weekend_ones(shipped):
     entries = shipped.holidays(Segment.FO)
-    assert len(entries) == 18
-    weekend = [entry for entry in entries if entry.date.weekday() >= 5]
-    assert {entry.date.isoformat() for entry in weekend} == {
-        "2026-02-15",
-        "2026-03-21",
-        "2026-08-15",
+    # The holiday-master API returns 20 for 2026 -- the circular's 18 plus the
+    # 15-Jan Municipal Election and the 08-Nov Diwali Laxmi Pujan Sunday.
+    assert len(entries) == 20
+    weekend = {
+        entry.date.isoformat() for entry in entries if entry.date.weekday() >= 5
     }
+    assert {"2026-02-15", "2026-03-21", "2026-08-15", "2026-11-08"} <= weekend
     assert all(entry.source is SourceTrust.OFFICIAL for entry in entries)
 
 
-def test_muhurat_is_the_official_date_with_unofficial_timings(shipped):
-    """2026-11-08 is a Sunday, and the circular says so deliberately.
+def test_the_cash_and_fo_holiday_lists_are_both_official_and_match_for_2026(shipped):
+    cash = {entry.date.isoformat() for entry in shipped.holidays(Segment.CASH)}
+    fo = {entry.date.isoformat() for entry in shipped.holidays(Segment.FO)}
+    assert cash == fo
+    assert len(cash) == 20
+
+
+def test_muhurat_is_the_official_date_with_unknown_timings(shipped):
+    """2026-11-08 is a Sunday, and NSE says so deliberately.
 
     The date is official; the timings are explicitly "notified subsequently".
     A special session is therefore checked before the weekend rule -- otherwise
@@ -350,9 +366,9 @@ def test_muhurat_is_the_official_date_with_unofficial_timings(shipped):
         assert not status.is_open
 
 
-def test_the_third_party_muhurat_date_guess_is_gone(shipped):
-    # An earlier revision carried 2026-10-21 from a broker page. The circular
-    # settles it: Muhurat is 2026-11-08.
+def test_muhurat_is_the_only_special_session_and_the_old_guess_is_gone(shipped):
+    # An earlier revision carried a third-party 2026-10-21 guess. NSE settles
+    # it: Muhurat is 2026-11-08.
     special_dates = {entry.date.isoformat() for entry in shipped.special_sessions()}
     assert special_dates == {"2026-11-08"}
 

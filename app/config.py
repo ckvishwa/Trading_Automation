@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # never from a prompt. Both are registered with the log redactor at startup,
     # so neither can reach a log line. Absent means LIVE BLOCKED, not degraded
     # live operation: an engine that cannot authenticate must say so.
+    # The Analytics Token is the preferred Upstox credential: free, read-only
+    # (GET APIs only -- it cannot place or modify orders), valid one year, and
+    # it reaches the market-data websocket without static-IP whitelisting. A
+    # normal access token is accepted as a fallback.
+    upstox_analytics_token: str = Field(default="", alias="UPSTOX_ANALYTICS_TOKEN")
     upstox_access_token: str = Field(default="", alias="UPSTOX_ACCESS_TOKEN")
     upstox_api_key: str = Field(default="", alias="UPSTOX_API_KEY")
     fyers_access_token: str = Field(default="", alias="FYERS_ACCESS_TOKEN")
@@ -117,6 +122,7 @@ class Settings(BaseSettings):
             value
             for value in (
                 self.webhook_token,
+                self.upstox_analytics_token,
                 self.upstox_access_token,
                 self.upstox_api_key,
                 self.fyers_access_token,
@@ -125,8 +131,21 @@ class Settings(BaseSettings):
         )
 
     @property
+    def upstox_market_data_token(self) -> str:
+        """The credential used for market-data access, analytics token first."""
+        return self.upstox_analytics_token or self.upstox_access_token
+
+    @property
+    def upstox_token_kind(self) -> str | None:
+        if self.upstox_analytics_token:
+            return "analytics"
+        if self.upstox_access_token:
+            return "access"
+        return None
+
+    @property
     def has_upstox_credentials(self) -> bool:
-        return bool(self.upstox_access_token)
+        return bool(self.upstox_market_data_token)
 
     @property
     def symbol_allowlist(self) -> tuple[str, ...]:

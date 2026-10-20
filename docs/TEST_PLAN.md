@@ -1,13 +1,13 @@
 # Test plan and evidence
 
-Updated 2026-10-19, after vendoring Upstox's official Protobuf schema,
-verifying instrument metadata against the real file, and loading the
-official NSE F&O holiday circular.
+Updated 2026-10-20, after the official NSE holiday API, the effective-dated
+15:40 F&O session, Analytics Token support, feed-verification states, option
+selection, and the M4 feature engine.
 
 ## How to run
 
 ```powershell
-# Python engine (502 tests, fully offline)
+# Python engine (583 tests, fully offline)
 .\.venv\Scripts\python.exe -m pytest
 
 # Pre-existing Node signal collector (6 tests, untouched)
@@ -24,16 +24,17 @@ authorization are present.
 
 | Suite | Command | Result |
 |---|---|---|
-| Python, all | `python -m pytest` | **502 passed**, 1 skipped, 0 failed, 1 warning |
-| Python unit | `python -m pytest tests/unit` | **412 passed** |
+| Python, all | `python -m pytest` | **583 passed**, 2 skipped, 0 failed, 1 warning |
+| Python unit | `python -m pytest tests/unit` | **486 passed** |
 | Python contract | `python -m pytest tests/contract` | **31 passed** |
-| Python replay | `python -m pytest tests/replay` | **59 passed, 1 skipped** |
+| Python replay | `python -m pytest tests/replay` | **66 passed, 2 skipped** |
 | Node (pre-existing) | `npm test` | **6 passed**, 0 failed |
 
-The one skip is deliberate and visible on purpose:
-`test_parity_against_recorded_alerts_is_not_yet_possible`, marked `live`, which
-skips with a message naming the recorded TradingView alerts needed to close the
-M1 parity gate. It is a gap reported by the test run rather than buried here.
+The two skips are deliberate and visible on purpose: the HTR parity placeholder
+(`test_parity_against_real_tradingview_alerts_is_not_yet_possible`) and the older
+reference-only placeholder, both marked `live`, each skipping with a message
+naming the genuine TradingView alerts needed to close the M1 parity gate. They
+are gaps reported by the test run rather than buried here.
 
 The one warning is `StarletteDeprecationWarning: Using httpx with
 starlette.testclient is deprecated`, raised by FastAPI's own test client import.
@@ -46,6 +47,56 @@ TradingView interval -> canonical label for 1/5/15/60/5m/30S/D/1D/W; rejection o
 empty, whitespace, `banana`, `5x`, `m5`; intraday bar durations; **refusal** to
 derive a bar duration for D/W/M, because a daily bar's length depends on the
 session calendar; bar-open + one bar = bar-close.
+
+### `tests/unit/test_feed_verification.py`
+The verification lattice: no credential is BLOCKED, a rejected credential is
+FAILED (not blocked), an open socket with no ticks is only SOCKET_CONNECTED, a
+closed-market connection is MARKET_CLOSED, invalid-only ticks are
+LIVE_DATA_INVALID, valid ticks **without** a completed candle are not yet
+verified, valid ticks **with** a candle reach LIVE_STREAM_VERIFIED, and parity is
+the strongest state. **A connected socket is never automatically verified.**
+Candle parity: identical candles match; an OHLC mismatch is reported per field;
+a bar missing from the built set is reported and never filled; an extra built
+bar is reported; an empty comparison is never parity; a tolerance can absorb
+provider rounding but defaults to zero.
+
+### `tests/unit/test_option_selector.py`
+Expiry: the nearest unexpired expiry skips past ones, today still counts, all-past
+is an error; selection excludes expired contracts. ATM/near-ATM: ATM is the
+listed strike nearest spot, the default width takes two strikes either side for
+both CE and PE, the width is configurable, the window clamps at the chain edge
+without inventing strikes, a non-positive spot is refused, selection is
+deterministic, and **the returned universe carries nothing executable**. Quote
+assessment: a healthy quote is usable; missing, one-sided, wide-spread, stale and
+**mock-sourced** quotes are each rejected with a reason; multiple faults are all
+reported; `assess_universe` reports per contract.
+
+### `tests/unit/test_behavior_features.py`
+Guards: too few candles raises rather than returning partial features; a
+non-ascending or mixed-symbol window is a caller error. **Determinism** and **no
+look-ahead** (a bar's features are identical whether or not a later bar exists).
+Per group: body/wick ratios on a known shape and a zero-range doji yielding zeros
+not `nan`; consecutive runs; higher-high run and HH/HL structure; failed breakout
+and breakdown with magnitudes; momentum over the lookback, acceleration sign, and
+the weakening-follow-through flag; range expansion above one for a wide bar and
+compression below one when ranges shrink; plain-type serialization.
+
+### `tests/unit/test_behavior_decision.py`
+**The default engine rejects clean data for INSUFFICIENT_HISTORICAL_EVIDENCE** --
+no validated edge, so abstaining is the honest outcome. Insufficient history and
+a bad window reject with their own reasons. A rule objection blocks accept even
+with validation enabled. ACCEPT is reachable **only** when `evidence_validated`
+is explicitly set and no rule objects -- proving the path exists without flipping
+it on. The default engine cannot accept whatever the features; decisions are
+deterministic; the engine never emits BUY/SELL; `estimated_edge` is always None;
+the default rule set guards data integrity only.
+
+### `tests/replay/test_htr_parity.py`
+Genuine matching alerts reach parity; **synthetic input can never reach parity**
+even when the numbers match (provenance must be TradingView); a direction
+mismatch fails even when genuine; an empty recording is not parity; loading
+rejects a non-genuine source and a bad direction, accepts genuine records with
+UTC normalization; the real gate is `live`-skipped until a recording exists.
 
 ### `tests/unit/test_upstox_protobuf.py`
 Decoding of **genuine Protobuf wire bytes**, serialized by the classes generated

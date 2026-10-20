@@ -223,3 +223,80 @@ def test_the_live_smoke_test_imports_nothing_that_could_trade():
     assert "orders_placed" in text
     for forbidden in ("place_order", "/order", "quantity=", "transaction_type"):
         assert forbidden not in text, forbidden
+
+
+# --- Analytics Token and explicit verification states --------------------------
+
+
+def test_the_analytics_token_is_preferred_over_the_access_token():
+    configured = settings_with(
+        UPSTOX_ANALYTICS_TOKEN="n" * 40, UPSTOX_ACCESS_TOKEN="a" * 40
+    )
+    assert configured.upstox_token_kind == "analytics"
+    assert configured.upstox_market_data_token == "n" * 40
+
+
+def test_the_access_token_is_the_documented_fallback():
+    configured = settings_with(UPSTOX_ACCESS_TOKEN="a" * 40)
+    assert configured.upstox_token_kind == "access"
+    assert configured.upstox_market_data_token == "a" * 40
+
+
+def test_both_tokens_are_registered_as_log_secrets():
+    configured = settings_with(
+        UPSTOX_ANALYTICS_TOKEN="n" * 40, UPSTOX_ACCESS_TOKEN="a" * 40
+    )
+    assert "n" * 40 in configured.secrets
+    assert "a" * 40 in configured.secrets
+
+
+def test_the_blocked_message_points_at_the_analytics_token(capsys):
+    code, payload = run(capsys, settings=settings_with())
+    assert code == smoke.EXIT_BLOCKED
+    assert payload["state"] == "AUTHENTICATION_BLOCKED"
+    assert "UPSTOX_ANALYTICS_TOKEN" in payload["reason"]
+    assert "read-only" in payload["reason"]
+
+
+def test_the_authorize_endpoint_is_the_v3_market_data_feed_path():
+    assert smoke.AUTHORIZE_URL == (
+        "https://api.upstox.com/v3/feed/market-data-feed/authorize"
+    )
+    assert smoke.HISTORICAL_V3_PATH == "https://api.upstox.com/v3/historical-candle"
+
+
+def test_an_authorize_failure_reports_authentication_failed_state(capsys, monkeypatch):
+    import urllib.error
+
+    monkeypatch.setattr(
+        smoke, "authorized_url", lambda *a, **k: (_ for _ in ()).throw(
+            urllib.error.URLError("refused")
+        )
+    )
+    monkeypatch.setattr(smoke, "websockets", __import__("json"), raising=False)
+    code, payload = run(capsys, settings=settings_with(UPSTOX_ANALYTICS_TOKEN="t" * 40))
+    assert code == smoke.EXIT_FAILED
+    assert payload["state"] == "AUTHENTICATION_FAILED"
+    assert payload["verified_against_live_account"] is False
+
+
+def test_the_tls_verification_is_not_disabled_anywhere():
+    text = (PROJECT_ROOT / "tools" / "upstox_live_smoke.py").read_text("utf-8")
+    # No sslcontext that turns off verification, no CERT_NONE, no verify=False.
+    for forbidden in ("CERT_NONE", "verify=False", "check_hostname = False", "ssl._create_unverified"):
+        assert forbidden not in text, forbidden
+
+
+def test_the_signed_url_and_token_are_not_printed(capsys, monkeypatch):
+    # A failure must not echo the token; the signed URL is one-time and also not
+    # logged. str(exc) on the authorize error carries neither.
+    import urllib.error
+
+    secret = "z" * 48
+    monkeypatch.setattr(
+        smoke, "authorized_url",
+        lambda *a, **k: (_ for _ in ()).throw(urllib.error.URLError("boom")),
+    )
+    monkeypatch.setattr(smoke, "websockets", __import__("json"), raising=False)
+    _, payload = run(capsys, settings=settings_with(UPSTOX_ANALYTICS_TOKEN=secret))
+    assert secret not in json.dumps(payload)
